@@ -1,0 +1,23 @@
+obj-$(CONFIG_PANEL_GENERIC) += panel-generic.o
+obj-$(CONFIG_PANEL_SHARP_LS037V7DW01) += panel-sharp-ls037v7dw01.o
+obj-$(CONFIG_PANEL_SHARP_LQ043T1DG01) += panel-sharp-lq043t1dg01.o
+
+obj-$(CONFIG_PANEL_TAAL) += panel-taal.o
+obj-$(CONFIG_PANEL_D2L) += panel-d2l.o
+obj-$(CONFIG_PANEL_NEC_NL8048HL11_01B) += panel-nec-NL8048HL11-01B.o
+obj-$(CONFIG_PANEL_PICO_DLP) +=  panel-picodlp.o
+obj-$(CONFIG_PANEL_DP501) += panel-displayport.o
+obj-$(CONFIG_PANEL_TOPPOLY_TDO35S) += panel-toppoly-tdo35s.o
+obj-$(CONFIG_PANEL_TPO_TD043MTEA1) += panel-tpo-td043mtea1.o
+obj-$(CONFIG_PANEL_ACX565AKM) += panel-acx565akm.o
+obj-$(CONFIG_PANEL_SIL9022) += panel_sil9022.o
+obj-$(CONFIG_PANEL_BYD_BM240400) += panel-byd-bm240400.o
+obj-$(CONFIG_PANEL_LG_4573) += panel-lg-4573.o
+obj-$(CONFIG_PANEL_MT_MTF0280) += panel-mt-mtf0280.o
+obj-$(CONFIG_PANEL_BOE_HT101) += panel-boe-ht101wsb.o
+obj-$(CONFIG_PANEL_LG_LB070WV6) += panel-lg-lb070wv6.o
+obj-$(CONFIG_PANEL_WT_WT035NY) += panel-wt-wt035ny.o
+obj-$(CONFIG_PANEL_CPT_80XA01) += panel-cpt-80xa01.o
+obj-$(CONFIG_PANEL_AUO_A101EWE) += panel-auo-a101ewe01.o
+obj-$(CONFIG_PANEL_CLAA_070ND22) += panel-claa-070nd22.o
+obj-$(CONFIG_PANEL_IVO_M116NW) += panel-ivo-m116nwr1.o
