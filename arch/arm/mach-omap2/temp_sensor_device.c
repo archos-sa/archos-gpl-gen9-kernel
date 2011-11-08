@@ -30,12 +30,16 @@
 
 void omap_temp_sensor_resume_idle()
 {
+#ifdef CONFIG_SENSORS_OMAP_BANDGAP_TEMP_SENSOR
 	omap_temp_sensor_idle(0);
+#endif
 }
 
 void omap_temp_sensor_prepare_idle()
 {
+#ifdef CONFIG_SENSORS_OMAP_BANDGAP_TEMP_SENSOR
 	omap_temp_sensor_idle(1);
+#endif
 }
 
 static struct omap_device_pm_latency omap_temp_sensor_latency[] = {

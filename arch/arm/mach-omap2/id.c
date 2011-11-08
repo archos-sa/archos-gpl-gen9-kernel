@@ -25,11 +25,29 @@
 #include <plat/control.h>
 #include <plat/cpu.h>
 
+#ifdef CONFIG_MACH_ARCHOS
+#include <asm/feature_list.h>
+#endif
+
+#define FUSE_MPU_DPLL_BITMASK	0xC0000
+#define FUSE_MPU_DPLL_BITOFFSET 18
+#define DCC_1_2G		0x01
+#define DCC_1_5G		0x03
+
 static struct omap_chip_id omap_chip;
 static unsigned int omap_revision;
+static bool omap4_sb_off;
+static char omap_revision_name[16];
 
 u32 omap3_features;
 u32 omap4_features;
+
+char * omap_rev_name(void)
+{
+	return omap_revision_name;
+}
+EXPORT_SYMBOL(omap_rev_name);
+
 
 unsigned int omap_rev(void)
 {
@@ -189,14 +207,26 @@ void __init omap3_check_features(void)
 
 static void __init omap4_check_features(void)
 {
+	u32 val;
 	u32 si_type = 0;
-
 	omap4_features = 0;
 
 	if (omap_revision >= OMAP4430_REV_ES2_0)
 		omap4_features |= OMAP4_HAS_MPU_1GHZ;
 
-	if (omap_revision >= OMAP4460_REV_ES1_0) {
+	/* Enable 1.2Gz OPP for 4430 silicon that supports it
+	 * TODO: determine if FUSE_OPP_VDD_MPU_3 is a reliable source to
+	 * determine 1.2Gz availability.
+	 */
+	if (is_omap443x()) {
+		val = __raw_readl(OMAP2_L4_IO_ADDRESS(CTRL_FUSE_OPP_VDD_MPU_3));
+		val &= 0xFFFFFF;
+
+		if (val)
+			omap4_features |= OMAP4_HAS_MPU_1_2GHZ;
+	}
+
+	if (is_omap446x()) {
 		si_type =
 			read_tap_reg(OMAP4_CTRL_MODULE_CORE_STD_FUSE_PROD_ID_1_OFFSET);
 		switch ((si_type & (3 << 16)) >> 16) {
@@ -210,8 +240,55 @@ static void __init omap4_check_features(void)
 			omap4_features |= OMAP4_HAS_MPU_1_2GHZ;
 			break;
 		}
+		/*
+		 * Check MPU_DPLL trimming bits in CONTROL_STD_FUSE_OPP_DPLL_1
+		 * register. According to trim value we should use DCC chain on
+		 * target frequencies higher than 1GHz.
+		 * Used bit[18:19] in OPP_DPLL1 reg for detect this feature
+		 * [Bit18] [Bit19] [max MPU_DPLL freq] [DCC@1.2GHz] [DCC@1.5GHz]
+		 *    0        0         2.0GHz		   +		+
+		 *    1        0         2.4GHz		   -		+
+		 *    1        1         3.0GHz		   -		-
+		 */
+		val = omap_ctrl_readl(
+			OMAP4_CTRL_MODULE_CORE_STD_FUSE_OPP_DPLL_1_OFFSET);
+
+		val = (val & FUSE_MPU_DPLL_BITMASK) >> FUSE_MPU_DPLL_BITOFFSET;
+		omap4_features |= (OMAP4_HAS_DCC_1_5GHZ | OMAP4_HAS_DCC_1_2GHZ);
+		omap4_features &= ~((val == DCC_1_5G) ? (OMAP4_HAS_DCC_1_2GHZ |
+						 OMAP4_HAS_DCC_1_5GHZ) :
+				    (val == DCC_1_2G) ? OMAP4_HAS_DCC_1_2GHZ : 0);
 	}
+
+#if defined (CONFIG_MACH_ARCHOS) && !defined (CONFIG_ARCHOS_FORCE_OMAP4_HP)	
+	{
+		struct feature_tag_turbo * turbo = NULL;
+		
+		/*  tnt opp can only be reached with some appropriate external thermal
+		 *  dissipator. Turbo feature flag signals that device package features
+		 *  that mandatory heatsink.
+		 */
+		turbo = get_feature_tag(FTAG_TURBO, feature_tag_size(feature_tag_turbo));
+	
+		if (!turbo || !(turbo->flag))
+			omap4_sb_off = true;
+		else
+			pr_info("%s: turbo package (%02x).\n", __func__, turbo->flag);
+	}
+#endif
+
+	if (omap4_sb_off)
+		omap4_features &= ~(is_omap446x() ? OMAP4_HAS_MPU_1_5GHZ :
+							OMAP4_HAS_MPU_1_2GHZ);
 }
+
+static int __init omap4_opp_sb_off_switch(char *val)
+{
+	omap4_sb_off = true;
+	return 0;
+}
+
+early_param("opp_sb_off", omap4_opp_sb_off_switch);
 
 void __init omap3_check_revision(void)
 {
@@ -442,6 +519,9 @@ void __init omap4_check_revision(void)
 		break;
 	}
 
+	snprintf(omap_revision_name, sizeof(omap_revision_name),
+			"ES%d.%d %s", rev, dot, type);
+
 	pr_info("***********************");
 	pr_info("OMAP%04x ES%d.%d type(%s)\n",
 			omap_rev() >> 16, rev, dot, type);
@@ -535,6 +615,9 @@ void __init omap3_cpuinfo(void)
 		/* Use the latest known revision as default */
 		strcpy(cpu_rev, "3.1");
 	}
+
+	snprintf(omap_revision_name, sizeof(omap_revision_name),
+			"ES%s", cpu_rev);
 
 	/* Print verbose information */
 	pr_info("%s ES%s (", cpu_name, cpu_rev);

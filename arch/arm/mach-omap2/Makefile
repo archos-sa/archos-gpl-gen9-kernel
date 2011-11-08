@@ -20,7 +20,8 @@ obj-$(CONFIG_ARCH_OMAP4) += $(prcm-common) $(hwmod-common)
 
 obj-$(CONFIG_OMAP_MCBSP)		+= mcbsp.o
 obj-$(CONFIG_DEBUG_FS)			+= omap_hwmod_debug.o
-obj-$(CONFIG_OMAP_TEMP_SENSOR)		+=temp_sensor_device.o
+obj-$(CONFIG_OMAP_TEMP_SENSOR)		+= temp_sensor_device.o
+obj-$(CONFIG_ARCHOS_OMAP4_DUTY_CYCLE)	+= temp_duty_cycle.o
 obj-$(CONFIG_OMAP4_TPS62361)		+= omap_tps6236x.o
 
 # SMP support ONLY available for OMAP4
@@ -211,6 +212,7 @@ obj-$(CONFIG_MACH_ARCHOS_A80S)		+= board-archos-a80s.o \
 					   archos-lcd-cpt-xga8.o \
 					   archos-audio-twl6040.o \
 					   archos-touchscreen-tma340.o \
+					   archos-touchscreen-tr16c0-8.o \
 					   archos-compass.o \
 					   archos-usb-musb.o
 obj-$(CONFIG_MACH_ARCHOS_A80H)		+= board-archos-a80h.o \
@@ -218,6 +220,7 @@ obj-$(CONFIG_MACH_ARCHOS_A80H)		+= board-archos-a80h.o \
 					   archos-lcd-cpt-xga8.o \
 					   archos-audio-twl6040.o \
 					   archos-touchscreen-tma340.o \
+					   archos-touchscreen-tr16c0-8.o \
 					   archos-compass.o \
 					   archos-usb-musb.o
 

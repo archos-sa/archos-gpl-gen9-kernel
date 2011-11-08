@@ -116,12 +116,16 @@ out:
 	return;	
 }
 
+static u32 get_isr_mask(struct dsscomp_dev *cdev)
+{
+	return cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : cdev->displays[cdev->vsync_src]->channel == OMAP_DSS_CHANNEL_LCD ? DISPC_IRQ_VSYNC : DISPC_IRQ_VSYNC2;
+}
+
 long isr_start( struct dsscomp_dev *cdev, void __user *ptr )
 {
 	struct omap_dss_device *dev;
 	struct omap_video_timings *t;
 	struct dsscomp_isr_cfg isr_cfg;
-	u32 mask;
 	int r, i;
 
 	if( (r=copy_from_user(&isr_cfg, ptr, sizeof(isr_cfg))) ) {
@@ -157,14 +161,13 @@ long isr_start( struct dsscomp_dev *cdev, void __user *ptr )
 		dev_info(DEV(cdev), "DSSCOMP_ISR_START vsync_src %d  scale %d  rate %d\n", cdev->vsync_src, cdev->scale, cdev->rate );
 
 	cdev->isr.registered = 1;
-	mask = cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : DISPC_IRQ_VSYNC2;
-	return omap_dispc_register_isr(dsscomp_isr, cdev, mask);
+
+	return omap_dispc_register_isr(dsscomp_isr, cdev, get_isr_mask(cdev));
 }
 
 long isr_stop( struct dsscomp_dev *cdev )
 {
 	long ret;
-	u32 mask;
 
 	if (!cdev->isr.num_ovls)
 		return 0;
@@ -172,8 +175,7 @@ long isr_stop( struct dsscomp_dev *cdev )
 		dev_info(DEV(cdev), "DSSCOMP_ISR_STOP\n");
 	if (cdev->isr.registered) {
 		cdev->isr.registered = 0;
-		mask = cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : DISPC_IRQ_VSYNC2;
-		ret = omap_dispc_unregister_isr(dsscomp_isr, cdev, mask);
+		ret = omap_dispc_unregister_isr(dsscomp_isr, cdev, get_isr_mask(cdev));
 	} else {
 		ret = 0;
 	}
@@ -186,13 +188,10 @@ long isr_stop( struct dsscomp_dev *cdev )
 
 long isr_resume( struct dsscomp_dev *cdev )
 {
-	u32 mask;
-
 	if (!cdev->isr.num_ovls || cdev->isr.registered)
 		return 0;
-	mask = cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : DISPC_IRQ_VSYNC2;
 	cdev->isr.registered = 1;
-	return omap_dispc_register_isr(dsscomp_isr, cdev, mask);
+	return omap_dispc_register_isr(dsscomp_isr, cdev, get_isr_mask(cdev));
 }
 
 long isr_suspend( struct dsscomp_dev *cdev )
@@ -202,8 +201,7 @@ long isr_suspend( struct dsscomp_dev *cdev )
 	if (!cdev->isr.registered)
 		return 0;
 	cdev->isr.registered = 0;
-	mask = cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : DISPC_IRQ_VSYNC2;
-	return omap_dispc_unregister_isr(dsscomp_isr, cdev, mask);
+	return omap_dispc_unregister_isr(dsscomp_isr, cdev, get_isr_mask(cdev));
 }
 
 long isr_reftime( struct dsscomp_dev *cdev, void __user *ptr )

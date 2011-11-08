@@ -49,7 +49,7 @@ static struct delayed_work	lpmode_work;
 bool in_dpll_cascading = false;
 DECLARE_RWSEM(dpll_cascading_lock);
 
-static struct clockdomain *l3_emif_clkdm;
+static struct clockdomain *l3_emif_clkdm, *l3_init_clkdm, *l4_per_clkdm;
 static struct clk *dpll_core_m2_ck, *dpll_core_m5x2_ck;
 static struct clk *gpmc_ick;
 
@@ -516,7 +516,8 @@ long omap4_dpll_regm4xen_round_rate(struct clk *clk, unsigned long target_rate)
 	return clk->dpll_data->last_rounded_rate;
 }
 
-void omap4_dpll_low_power_cascade_check_timer(struct work_struct *dwork)
+#ifdef CONFIG_OMAP4_DPLL_CASCADING
+static void omap4_dpll_low_power_cascade_check_timer(struct work_struct *dwork)
 {
 	struct clk *dpll_mpu_m2_ck, *dpll_core_m2_ck;
 	int delay;
@@ -533,7 +534,7 @@ void omap4_dpll_low_power_cascade_check_timer(struct work_struct *dwork)
 		omap4_dpll_low_power_cascade_enter();
 }
 
-int omap4_dpll_low_power_cascade_check_entry()
+static int omap4_dpll_low_power_cascade_check_entry(void)
 {
 	int delay = usecs_to_jiffies(LP_DELAY);
 
@@ -572,7 +573,7 @@ int dpll_cascading_blocker_hold(struct device *dev)
 
 	list_add(&blocker->node, &dpll_cascading_blocker_list);
 
-	if (list_was_empty && in_dpll_cascading) {
+	if (list_was_empty && in_dpll_cascading && abe_can_enter_dpll_cascading) {
 		omap4_dpll_low_power_cascade_exit();
 		in_dpll_cascading = false;
 	}
@@ -613,7 +614,7 @@ int dpll_cascading_blocker_release(struct device *dev)
 	list_del(&blocker->node);
 
 	if (list_empty(&dpll_cascading_blocker_list)
-			&& !in_dpll_cascading) {
+			&& !in_dpll_cascading && abe_can_enter_dpll_cascading) {
 		in_dpll_cascading = true;
 		omap4_dpll_low_power_cascade_enter();
 	}
@@ -642,6 +643,7 @@ EXPORT_SYMBOL(dpll_cascading_blocker_release);
 int omap4_dpll_low_power_cascade_enter()
 {
 	int ret = 0;
+	u32 mask;
 	struct clk *dpll_abe_ck, *dpll_abe_m3x2_ck;
 	struct clk *dpll_mpu_ck, *div_mpu_hs_clk;
 	struct clk *dpll_iva_ck, *div_iva_hs_clk, *iva_hsd_byp_clk_mux_ck;
@@ -684,6 +686,18 @@ int omap4_dpll_low_power_cascade_enter()
 	emu_sys_44xx_clkdm = clkdm_lookup("emu_sys_44xx_clkdm");
 	abe_44xx_clkdm = clkdm_lookup("abe_clkdm");
 
+	/* Just to avoid look-up on every call to speed up */
+	if (!l3_emif_clkdm)
+		l3_emif_clkdm = clkdm_lookup("l3_emif_clkdm");
+
+	/* Just to avoid look-up on every call to speed up */
+	if (!l3_init_clkdm)
+		l3_init_clkdm = clkdm_lookup("l3_init_clkdm");
+
+	/* Just to avoid look-up on every call to speed up */
+	if (!l4_per_clkdm)
+		l4_per_clkdm = clkdm_lookup("l4_per_clkdm");
+
 	if (!dpll_abe_ck || !dpll_mpu_ck || !div_mpu_hs_clk || !dpll_iva_ck ||
 		!div_iva_hs_clk || !iva_hsd_byp_clk_mux_ck || !dpll_core_m2_ck
 		|| !dpll_abe_m3x2_ck || !div_core_ck || !dpll_core_x2_ck ||
@@ -691,7 +705,8 @@ int omap4_dpll_low_power_cascade_enter()
 		!l4_wkup_clk_mux_ck || !lp_clk_div_ck || !pmd_stm_clock_mux_ck
 		|| !pmd_trace_clk_mux_ck || !dpll_core_m6x2_ck ||
 		!dpll_core_ck || !dpll_per_ck || !func_48m_fclk
-		|| !per_hsd_byp_clk_mux_ck || !per_hs_clk_div_ck) {
+		|| !per_hsd_byp_clk_mux_ck || !per_hs_clk_div_ck
+		|| !l3_emif_clkdm || !l3_init_clkdm || !l4_per_clkdm) {
 
 		pr_warn("%s: failed to get all necessary clocks\n", __func__);
 		ret = -ENODEV;
@@ -860,6 +875,77 @@ int omap4_dpll_low_power_cascade_enter()
 
 	omap2_clkdm_allow_idle(emu_sys_44xx_clkdm);*/
 
+	/* PRCM requires target clockdomain to be woken up before
+	 * changing its Static Dependencies settings
+	 */
+
+	/* Note: Domains not built with SW_WKUP capability like
+	 * L3_1, L3_2, L4_CFG and L4_WKUP may stall idle transition
+	 * during 1 idle cycle if SD is changed while domain is OFF
+	 */
+
+	if (cpu_is_omap443x()) {
+		/* Configures MEMIF clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_emif_clkdm);
+
+		/* Configures L3INIT clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l4_per_clkdm);
+
+		/* Disable SD for MPU towards EMIF, L3_1, L3_2, L3INIT, L4WKUP,
+		 * L4CFG and L4PER clockdomains (all MPU SD kept disabled)
+		 */
+		mask = OMAP4430_MEMIF_STATDEP_MASK |
+			OMAP4430_L3_2_STATDEP_MASK |
+			OMAP4430_L4CFG_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK |
+			OMAP4430_L3_1_STATDEP_MASK |
+			OMAP4430_L3INIT_STATDEP_MASK |
+			OMAP4430_L4PER_STATDEP_MASK;
+
+		cm_rmw_mod_reg_bits(mask, 0, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+
+		/* Configures MEMIF clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_emif_clkdm);
+
+		/* Configures L3INIT clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l4_per_clkdm);
+	} else {
+		/* Configures L3INIT clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l4_per_clkdm);
+
+		/* Disable SD for MPU towards L3_1, L3_2, L3INIT, L4WKUP,
+		 *  and L4PER clockdomains (all MPU SD kept disabled)
+		 */
+		mask = OMAP4430_L3_2_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK |
+			OMAP4430_L3_1_STATDEP_MASK |
+			OMAP4430_L3INIT_STATDEP_MASK |
+			OMAP4430_L4PER_STATDEP_MASK;
+
+		cm_rmw_mod_reg_bits(mask, 0, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+
+		/* MPU towards EMIF Static dependencies is kept disabled
+		 * since Asynchronous Bridge is safe on OMAP4460
+		 */
+
+		/* Configures L3INIT clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l4_per_clkdm);
+	}
+
 	recalculate_root_clocks();
 
 	goto out;
@@ -907,6 +993,7 @@ out:
 int omap4_dpll_low_power_cascade_exit()
 {
 	int ret = 0;
+	u32 reg, mask;
 	struct clk *sys_clkin_ck;
 	struct clk *dpll_abe_ck, *dpll_abe_m3x2_ck;
 	struct clk *dpll_mpu_ck, *div_mpu_hs_clk;
@@ -951,6 +1038,18 @@ int omap4_dpll_low_power_cascade_exit()
 	emu_sys_44xx_clkdm = clkdm_lookup("emu_sys_44xx_clkdm");
 	abe_44xx_clkdm = clkdm_lookup("abe_clkdm");
 
+	/* Just to avoid look-up on every call to speed up */
+	if (!l3_emif_clkdm)
+		l3_emif_clkdm = clkdm_lookup("l3_emif_clkdm");
+
+	/* Just to avoid look-up on every call to speed up */
+	if (!l3_init_clkdm)
+		l3_init_clkdm = clkdm_lookup("l3_init_clkdm");
+
+	/* Just to avoid look-up on every call to speed up */
+	if (!l4_per_clkdm)
+		l4_per_clkdm = clkdm_lookup("l4_per_clkdm");
+
 	if (!dpll_abe_ck || !dpll_mpu_ck || !div_mpu_hs_clk || !dpll_iva_ck ||
 		!div_iva_hs_clk || !iva_hsd_byp_clk_mux_ck || !dpll_core_m2_ck
 		|| !dpll_abe_m3x2_ck || !div_core_ck || !dpll_core_x2_ck ||
@@ -959,10 +1058,94 @@ int omap4_dpll_low_power_cascade_exit()
 		|| !pmd_trace_clk_mux_ck || !dpll_core_m6x2_ck
 		|| !sys_clkin_ck || !dpll_core_ck || !l3_div_ck || !l4_div_ck
 		|| !dpll_per_ck || !func_48m_fclk || !per_hsd_byp_clk_mux_ck
-		|| !per_hs_clk_div_ck) {
+		|| !per_hs_clk_div_ck || !l3_emif_clkdm || !l3_init_clkdm
+		|| !l4_per_clkdm) {
 		pr_warn("%s: failed to get all necessary clocks\n", __func__);
 		ret = -ENODEV;
 		goto out;
+	}
+
+	/* PRCM requires target clockdomain to be woken up before
+	 * changing its Static Dependencies settings
+	 */
+
+	/* Note: Domains not built with SW_WKUP capability like
+	 * L3_1, L3_2, L4_CFG and L4_WKUP may stall idle transition
+	 * during 1 idle cycle if SD is changed while domain is OFF
+	 */
+
+	if (cpu_is_omap443x()) {
+		/* Configures MEMIF clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_emif_clkdm);
+
+		/* Configures L3INIT clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l4_per_clkdm);
+
+		/* Enable SD for MPU towards EMIF, L3_1, L3_2, L3INIT,
+		 * L4WKUP, L4CFG and L4PER clockdomains
+		 */
+		reg = 1 << OMAP4430_MEMIF_STATDEP_SHIFT |
+			1 << OMAP4430_L3_2_STATDEP_SHIFT |
+			1 << OMAP4430_L4CFG_STATDEP_SHIFT |
+			1 << OMAP4430_L4WKUP_STATDEP_SHIFT |
+			1 << OMAP4430_L3_1_STATDEP_SHIFT |
+			1 << OMAP4430_L3INIT_STATDEP_SHIFT |
+			1 << OMAP4430_L4PER_STATDEP_SHIFT;
+		mask = OMAP4430_MEMIF_STATDEP_MASK |
+			OMAP4430_L3_2_STATDEP_MASK |
+			OMAP4430_L4CFG_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK |
+			OMAP4430_L3_1_STATDEP_MASK |
+			OMAP4430_L3INIT_STATDEP_MASK |
+			OMAP4430_L4PER_STATDEP_MASK;
+
+		cm_rmw_mod_reg_bits(mask, reg, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+
+		/* Configures MEMIF clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_emif_clkdm);
+
+		/* Configures L3INIT clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l4_per_clkdm);
+	} else {
+		/* Configures L3INIT clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain in SW_WKUP */
+		omap2_clkdm_wakeup(l4_per_clkdm);
+
+		/* Enable SD for MPU towards L3_1, L3_2, L3INIT,
+		 * L4WKUP and L4PER clockdomains
+		 */
+		reg = 1 << OMAP4430_L3_2_STATDEP_SHIFT |
+			1 << OMAP4430_L4WKUP_STATDEP_SHIFT |
+			1 << OMAP4430_L3_1_STATDEP_SHIFT |
+			1 << OMAP4430_L3INIT_STATDEP_SHIFT |
+			1 << OMAP4430_L4PER_STATDEP_SHIFT;
+		mask = OMAP4430_L3_2_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK |
+			OMAP4430_L3_1_STATDEP_MASK |
+			OMAP4430_L3INIT_STATDEP_MASK |
+			OMAP4430_L4PER_STATDEP_MASK;
+
+		cm_rmw_mod_reg_bits(mask, reg, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+
+		/* MPU towards EMIF Static dependencies is kept disabled
+		 * since Asynchronous Bridge is safe on OMAP4460
+		 */
+
+		/* Configures L3INIT clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l3_init_clkdm);
+
+		/* Configures L4_PER clockdomain back to HW_AUTO */
+		omap2_clkdm_allow_idle(l4_per_clkdm);
 	}
 
 	if (delayed_work_pending(&lpmode_work))
@@ -1075,3 +1258,4 @@ int omap4_dpll_low_power_cascade_exit()
 out:
 	return ret;
 }
+#endif

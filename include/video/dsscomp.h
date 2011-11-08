@@ -381,7 +381,7 @@ struct dss2_ovl_info {
  *    trans_enabled is true, and alpha_blending is false.
  */
 struct dss2_mgr_info {
-	__u32 ix;	/* display index same as sysfs/display# */
+	__u32 display_index;	/* display index same as sysfs/display# */
 
 	__u32 default_color;
 

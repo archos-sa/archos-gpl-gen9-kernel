@@ -40,6 +40,7 @@
 #include <linux/err.h>
 #include <linux/types.h>
 #include <linux/mutex.h>
+#include <linux/workqueue.h>
 #include <plat/common.h>
 #include <plat/temperature_sensor.h>
 #include <mach/ctrl_module_core_44xx.h>
@@ -95,6 +96,7 @@ struct omap_temp_sensor {
 	u32 clk_rate;
 	int debug;
 	int debug_temp;
+	struct delayed_work	work;
 };
 
 #ifdef CONFIG_PM
@@ -114,6 +116,9 @@ static struct omap_temp_sensor *temp_sensor_pm;
 static uint32_t debug_thermal;
 module_param_named(temp_sensor_debug, debug_thermal, uint, 0664);
 #endif
+
+static int averaged_current_temperature = 0;
+
 /*
  *OMAP446x temperature values in milli degress celsius ADC code values from 530 to 923
  */
@@ -284,25 +289,34 @@ static void omap443x_end_conversion(struct omap_temp_sensor *temp_sensor)
 static int omap443x_wait_for_end_of_conversion(struct omap_temp_sensor *temp_sensor)
 {
 	unsigned long temp;
+	unsigned long timeout = jiffies + HZ/10;
+	msleep(2); /* a conversion takes about 1.6ms, be conservative */
 	do {
 		temp = omap_temp_sensor_readl(temp_sensor,
 				TEMP_SENSOR_CTRL_OFFSET);
+		if (!(temp & BGAP_TEMP_SENSOR_EOCZ))
+			return 0;
 		cpu_relax();
-	} while (temp & BGAP_TEMP_SENSOR_EOCZ);
+	} while( time_before(jiffies, timeout));
 
-	return 0;
+printk("EOC timeout\n");
+	return -ETIMEDOUT;
 }
 
 static int omap443x_wait_for_start_of_conversion(struct omap_temp_sensor *temp_sensor)
 {
     unsigned long temp;
+	unsigned long timeout = jiffies + HZ/10;
 	do {
 		temp = omap_temp_sensor_readl(temp_sensor,
 				TEMP_SENSOR_CTRL_OFFSET);
+		if ((temp & BGAP_TEMP_SENSOR_EOCZ))
+			return 0;
 		cpu_relax();
-	} while (!(temp & BGAP_TEMP_SENSOR_EOCZ));
+	} while( time_before(jiffies, timeout));
 
-	return 0;
+printk("SOC timeout\n");
+	return -ETIMEDOUT;
 }
 
 static void omap443x_enable_continuous_mode(struct omap_temp_sensor *temp_sensor,
@@ -333,9 +347,11 @@ static ssize_t show_temp_max(struct device *dev,
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
-	int temp;
+	int temp, ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	temp = omap_temp_sensor_readl(temp_sensor, BGAP_THRESHOLD_OFFSET);
 	temp = (temp & OMAP4_T_HOT_MASK) >> OMAP4_T_HOT_SHIFT;
@@ -358,8 +374,11 @@ static ssize_t set_temp_max(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	long val;
 	u32 reg_val, t_cold, t_hot, temp;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -429,8 +448,11 @@ static ssize_t show_temp_max_hyst(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 temp;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	temp = omap_temp_sensor_readl(temp_sensor, BGAP_THRESHOLD_OFFSET);
 	temp = (temp & OMAP4_T_COLD_MASK) >> OMAP4_T_COLD_SHIFT;
@@ -453,8 +475,11 @@ static ssize_t set_temp_max_hyst(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 reg_val, t_hot, t_cold, temp;
 	long val;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -526,7 +551,9 @@ static ssize_t show_update_rate(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 temp = 0, ret = 0;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (!temp_sensor->clk_rate) {
 		pr_err("clk_rate is NULL\n");
@@ -554,8 +581,11 @@ static ssize_t set_update_rate(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 reg_val;
 	long val;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -582,7 +612,9 @@ static int omap_temp_sensor_read_temp(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	int temp=0, ret = 0;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (temp_sensor->debug) {
 		temp = temp_sensor->debug_temp;
@@ -604,9 +636,12 @@ static int omap_temp_sensor_read_temp(struct device *dev,
 	} else if(cpu_is_omap443x()) {
 		/* busy waiting here for the temperature sensor takes in the order of 1.6ms */
 		omap443x_start_conversion(temp_sensor);
-		omap443x_wait_for_start_of_conversion(temp_sensor);
+		ret = omap443x_wait_for_start_of_conversion(temp_sensor);
 		omap443x_end_conversion(temp_sensor);
-		omap443x_wait_for_end_of_conversion(temp_sensor);
+		if (ret)
+			goto out;
+		if ((ret = omap443x_wait_for_end_of_conversion(temp_sensor)))
+			goto out;
 
 		temp = omap_temp_sensor_readl(temp_sensor, TEMP_SENSOR_CTRL_OFFSET);
 		temp = temp & BGAP_TEMP_SENSOR_DTEMP_MASK;
@@ -650,8 +685,11 @@ static ssize_t set_temp_user_space(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	long val;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -696,8 +734,11 @@ static ssize_t show_temp_crit(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	int temp;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	temp = omap_temp_sensor_readl(temp_sensor, BGAP_TSHUT_OFFSET);
 	temp = (temp & OMAP4_TSHUT_HOT_MASK) >> OMAP4_TSHUT_HOT_SHIFT;
@@ -720,8 +761,11 @@ static ssize_t set_temp_crit(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 temp, reg_val;
 	long val;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -751,8 +795,11 @@ static ssize_t show_temp_crit_hyst(struct device *dev,
 	struct platform_device *pdev = to_platform_device(dev);
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	int temp;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	temp = omap_temp_sensor_readl(temp_sensor, BGAP_TSHUT_OFFSET);
 	temp = (temp & OMAP4_TSHUT_COLD_MASK) >> OMAP4_TSHUT_COLD_SHIFT;
@@ -775,8 +822,11 @@ static ssize_t set_temp_crit_hyst(struct device *dev,
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 	u32 temp, reg_val;
 	long val;
+	int ret;
 
-	mutex_lock(&temp_sensor->sensor_mutex);
+	ret = mutex_lock_interruptible(&temp_sensor->sensor_mutex);
+	if (ret)
+		return ret;
 
 	if (strict_strtol(buf, 10, &val)) {
 		count = -EINVAL;
@@ -980,6 +1030,51 @@ static irqreturn_t omap_talert_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static void temp_measure_work(struct work_struct *work)
+{
+	struct omap_temp_sensor *temp_sensor = container_of(work, struct omap_temp_sensor, work.work);
+	int temp, ret;
+	
+	mutex_lock(&temp_sensor->sensor_mutex);
+
+	if ( !temp_sensor->clk_on ) {
+		pr_info("temp_sensor not enabled\n");
+		goto out;
+	}
+	/* busy waiting here for the temperature sensor takes in the order of 1.6ms */
+	omap443x_start_conversion(temp_sensor);
+	ret = omap443x_wait_for_start_of_conversion(temp_sensor);
+	omap443x_end_conversion(temp_sensor);
+	if (ret)
+		goto out;
+	if ((ret = omap443x_wait_for_end_of_conversion(temp_sensor)))
+		goto out;
+
+	temp = omap_temp_sensor_readl(temp_sensor, TEMP_SENSOR_CTRL_OFFSET);
+	temp = temp & BGAP_TEMP_SENSOR_DTEMP_MASK;
+
+	/* look up for temperature in the table and return the
+		temperature */
+	if (temp > 127) {
+		pr_err("invalid adc code reported by the sensor %d", temp);
+	} else {
+		temp = omap443x_adc_to_temp_conversion(temp);
+		averaged_current_temperature = (temp * 90 + averaged_current_temperature * 10)/100;
+	}
+	
+out:
+	mutex_unlock(&temp_sensor->sensor_mutex);
+
+	schedule_delayed_work(&temp_sensor->work, HZ);
+}
+
+int omap4430_current_on_die_temperature( void )
+{
+	return averaged_current_temperature;
+}
+
+EXPORT_SYMBOL(omap4430_current_on_die_temperature);
+
 static int __devinit omap_temp_sensor_probe(struct platform_device *pdev)
 {
 	struct omap_temp_sensor_pdata *pdata = pdev->dev.platform_data;
@@ -1097,6 +1192,11 @@ static int __devinit omap_temp_sensor_probe(struct platform_device *pdev)
 		omap_temp_sensor_writel(temp_sensor, val, BGAP_CTRL_OFFSET);
 	}
 
+	if(cpu_is_omap443x()) {
+			INIT_DELAYED_WORK(&temp_sensor->work, temp_measure_work);
+			schedule_delayed_work(&temp_sensor->work, HZ);
+	}
+	
 	dev_info(&pdev->dev, "%s : '%s'\n", dev_name(temp_sensor->dev),
 			pdata->name);
 
@@ -1126,6 +1226,10 @@ static int __devexit omap_temp_sensor_remove(struct platform_device *pdev)
 {
 	struct omap_temp_sensor *temp_sensor = platform_get_drvdata(pdev);
 
+	if(cpu_is_omap443x()) {
+			printk("stopping work queue\n");
+			cancel_delayed_work(&temp_sensor->work);
+	}
 	hwmon_device_unregister(&pdev->dev);
 	kobject_uevent(&temp_sensor->dev->kobj, KOBJ_REMOVE);
 	sysfs_remove_group(&temp_sensor->dev->kobj, &omap_temp_sensor_group);

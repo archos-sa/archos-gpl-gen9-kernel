@@ -52,4 +52,6 @@ void omap_temp_sensor_resume_idle(void);
 void omap_temp_sensor_prepare_idle(void);
 void omap_temp_sensor_idle(int idle_state);
 
+int omap4430_current_on_die_temperature( void );
+
 #endif

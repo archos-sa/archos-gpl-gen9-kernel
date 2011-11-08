@@ -24,6 +24,8 @@
 #define PRODUCT_ID_A80H		0x1510
 #define PRODUCT_ID_A101S	0x1520
 #define PRODUCT_ID_A101H	0x1530
+#define PRODUCT_ID_A101XS	0x1540
+#define PRODUCT_ID_A120		0x1550
 
 #define UMS_PRODUCT_ID		0x00
 #define ADB_PRODUCT_ID		0x01
@@ -110,17 +112,17 @@ static char *usb_functions_all[] = {
 #ifdef CONFIG_USB_ANDROID_ACCESSORY
 	"accessory",
 #endif
+#ifdef CONFIG_USB_ANDROID_MTP
+	"mtp",
+#endif
+#ifdef CONFIG_USB_ANDROID_ADB
+	"adb",
+#endif
 #ifdef CONFIG_USB_ANDROID_ACM
 	"acm",
 #endif
 #ifdef CONFIG_USB_ANDROID_MASS_STORAGE
 	"usb_mass_storage",
-#endif
-#ifdef CONFIG_USB_ANDROID_ADB
-	"adb",
-#endif
-#ifdef CONFIG_USB_ANDROID_MTP
-	"mtp",
 #endif
 };
 

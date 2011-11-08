@@ -524,7 +524,7 @@ static void __init omap_mux_dbg_create_entry(
 		struct omap_mux *m = &e->mux;
 		m->partition = partition;
 
-		(void)debugfs_create_file(m->muxnames[0], S_IWUGO, mux_dbg_dir,
+		(void)debugfs_create_file(m->muxnames[0], S_IWUG, mux_dbg_dir,
 					  m, &omap_mux_dbg_signal_fops);
 	}
 }

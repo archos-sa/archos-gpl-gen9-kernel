@@ -483,7 +483,6 @@ static void archos_twl4030_i2c_access(struct archos_twl4030_usb *twl, int on)
 
 static void archos_twl4030_usb_power(struct archos_twl4030_usb *twl, int on)
 {
-printk("archos_twl4030_usb_power %d\n", on);
 	if (on) {
 		regulator_enable(twl->usb3v1);
 		regulator_enable(twl->usb1v8);
@@ -502,13 +501,11 @@ printk("archos_twl4030_usb_power %d\n", on);
 		regulator_disable(twl->usb1v8);
 		regulator_disable(twl->usb3v1);
 	}
-printk("archos_twl4030_usb_power done\n");
 }
 
 static void archos_twl4030_phy_power(struct archos_twl4030_usb *twl, int on)
 {
 	u8 pwr;
-printk("archos_twl4030_phy_power %d\n", on);
 	pwr = twl4030_usb_read(twl, PHY_PWR_CTRL);
 	if (on) {
 		archos_twl4030_usb_power(twl, 1);
@@ -523,7 +520,6 @@ printk("archos_twl4030_phy_power %d\n", on);
 		WARN_ON(twl4030_usb_write_verify(twl, PHY_PWR_CTRL, pwr) < 0);
 		archos_twl4030_usb_power(twl, 0);
 	}
-printk("archos_twl4030_phy_power done\n");
 }
 
 static void archos_twl4030_phy_suspend(struct archos_twl4030_usb *twl, int controller_off)
@@ -531,12 +527,6 @@ static void archos_twl4030_phy_suspend(struct archos_twl4030_usb *twl, int contr
 	if (twl->asleep)
 		return;
 
-#if 0
-	spin_lock(&twl->otg.lock);
-	if (twl->otg.link_save_context)
-		twl->otg.link_save_context(&twl->otg);
-	spin_unlock(&twl->otg.lock);
-#endif
 	archos_twl4030_phy_power(twl, 0);
 	twl->asleep = 1;
 }
@@ -728,18 +718,25 @@ static void archos_twl4030_linkstate_worker(struct work_struct *work)
 				archos_twl4030_usb_power(twl, 0);
 			}
 #endif
-			archos_twl4030_link_force_active(twl, 0);
-			archos_twl4030_phy_suspend(twl, 0);
-
 			if (twl->previous_linkstat == USB_LINK_VBUS) {
 				printk("STATE_VBUS -> STATE_NONE\n");
 				blocking_notifier_call_chain(&twl->otg.notifier, USB_EVENT_NONE,
 						twl->otg.gadget);
+			
 			} else if (twl->previous_linkstat == USB_LINK_ID) {
 				printk("STATE_GND -> STATE_NONE\n");
-				blocking_notifier_call_chain(&twl->otg.notifier, USB_EVENT_ENUMERATED+1,
+				blocking_notifier_call_chain(&twl->otg.notifier, USB_EVENT_NONE,
 						twl->otg.gadget);
 			}
+
+			/* Hack!!! If the driver is not waiting
+			 * 100ms at this point and turns off the phy
+			 * then DISCONNECT interrupt will not be
+			 * reached to mentor
+			 */
+			msleep(100);
+			archos_twl4030_link_force_active(twl, 0);
+			archos_twl4030_phy_suspend(twl, 0);
 		} else {
 			/* on A101 we only get transitions between USB_LINK_ID and USB_LINK_VBUS,
 			 * but we need the phy to be off for a short moment for some reason
@@ -980,7 +977,6 @@ static int archos_twl4030_set_vbus(struct otg_transceiver *x, bool enabled)
 {
 	struct regulator *vbus_draw;
 	struct archos_twl4030_usb *twl = xceiv_to_twl(x);
-printk("archos_twl4030_set_vbus\n");
 
 	vbus_draw = twl->vbus_draw;
 	
@@ -1005,7 +1001,6 @@ printk("archos_twl4030_set_vbus\n");
 static int archos_twl4030_enable_irq(struct otg_transceiver *x)
 {
 	struct archos_twl4030_usb *twl = xceiv_to_twl(x);
-printk("archos_twl4030_enable_irq\n");
 	
 	twl->linkstat = USB_LINK_UNKNOWN;
 	
@@ -1203,7 +1198,6 @@ static int __init archos_twl4030_usb_probe(struct platform_device *pdev)
 #ifdef CONFIG_TPS65921_CHARGE_DETECT
 	if ( twl->enable_charge_detect ) {
 		init_completion(&twl->charge_detect_done);
-printk("twl->accessory_irq: %d\n", twl->accessory_irq);
 		status = request_irq(twl->accessory_irq, archos_twl4030_accessory_irq,
 				0, "tps65921_accessory", twl);
 		if (status < 0) {

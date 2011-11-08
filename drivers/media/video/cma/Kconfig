@@ -1,0 +1,7 @@
+config VIDEO_CMA
+	tristate "Contiguous memory allocator support"
+	default n
+	depends on ARCH_OMAP3
+	help
+           Contiguous memory allocator.
+

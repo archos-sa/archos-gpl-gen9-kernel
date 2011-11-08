@@ -2954,7 +2954,11 @@ int dispc_scaling_decision(u16 width, u16 height,
 				u16 min_y_decim, u16 max_y_decim,
 				u16 *x_decim, u16 *y_decim, bool *three_tap)
 {
-	int maxdownscale = cpu_is_omap24xx() ? 2 : 4;
+	/**
+	 * According to TRM, max downscale can be 2 or 4. Let's put the minimum (2),
+	 * it will be recalculate after.
+	 */
+	int maxdownscale = 2;
 	int bpp = color_mode_to_bpp(color_mode);
 
 	struct omap_overlay *ovl = NULL;
@@ -2975,9 +2979,6 @@ int dispc_scaling_decision(u16 width, u16 height,
 	int x, y;			/* decimation search variables */
 	unsigned long fclk_max = dispc_fclk_rate();
 
-	/* take the highest ratio beetwen input image size and output one */
-	int downscale_ratio = DIV_ROUND_UP(width, out_width);
-	downscale_ratio = max( downscale_ratio, DIV_ROUND_UP(height, out_height) );
 	ovl = omap_dss_get_overlay(plane);
 	if (ovl) dev=ovl->manager->device;
 
@@ -2992,25 +2993,8 @@ int dispc_scaling_decision(u16 width, u16 height,
                 return 0;
         }
 
-	/* we can't downscale by 2 or more : decimate before */
-	if (downscale_ratio > 2) {
-		min_x_decim = min_y_decim = 2;
-		max_x_decim = max_y_decim = downscale_ratio;
-	}
-
-	/* Rescale can not work in some clock condition. In that case, we should decimate before upscaling */
-	if (dev) {
-		struct omap_video_timings *t = &dev->panel.timings;
-		if ((can_scale) && (t->pixel_clock != 0) && (width != 0) && (out_width != 0)) {
-			int minDecim = 1;
-			while( (width/minDecim != 0) && ((t->pixel_clock*1000) / out_width) > ( fclk_max / (width/minDecim)) ) minDecim++;			
-			min_x_decim = (min_x_decim > minDecim)?min_x_decim:minDecim;
-			max_x_decim = (max_x_decim > minDecim)?max_x_decim:minDecim;
-			min_y_decim = (min_y_decim > minDecim)?min_y_decim:minDecim;
-			max_y_decim = (max_y_decim > minDecim)?max_y_decim:minDecim;
-			if (minDecim > 1) DSSDBG("Force to decimate %d before scaling usage\n", minDecim);
-		}
-	}
+	if(min_x_decim < 1) min_x_decim = 1;
+	if(min_y_decim < 1) min_y_decim = 1;
 
 	/* restrict search region based on whether we can decimate */
 	if (!can_decimate_x) {
@@ -3055,6 +3039,16 @@ int dispc_scaling_decision(u16 width, u16 height,
 	max_factor = max(max_x_decim, max_y_decim);
 	x = min_x_decim;
 	y = min_y_decim;
+
+	int can_check_rescale = 0;
+	struct omap_video_timings *t = NULL;
+	if (dev) {
+		t = &dev->panel.timings;
+
+		if (dev && can_scale && t != NULL && t->pixel_clock != 0 && width != 0 && out_width != 0)
+			can_check_rescale = 1;
+	}
+
 	while (1) {
 		if (x < min_x_decim || x > max_x_decim ||
 			y < min_y_decim || y > max_y_decim)
@@ -3069,6 +3063,12 @@ int dispc_scaling_decision(u16 width, u16 height,
 		if (!can_scale)
 			goto loop;
 
+		/* Rescale can not work in some clock condition. In that case, we should decimate before upscaling */
+		if (can_check_rescale)
+			if (((t->pixel_clock*1000)/out_width) > (fclk_max/(width/x)))
+				goto loop;
+
+		maxdownscale = cpu_is_omap24xx() ? 2 : (*three_tap ? 2 : 4);
 		if (out_width < in_width / maxdownscale ||
 			out_height < in_height / maxdownscale)
 			goto loop;
@@ -3079,17 +3079,6 @@ int dispc_scaling_decision(u16 width, u16 height,
 			*three_tap = in_width > 1024;
 		else if (omap_rev() == OMAP4430_REV_ES1_0)
 			*three_tap = in_width > 1280;
-
-		/* Also use 3-tap if downscaling by 2 or less */
-		*three_tap |= out_height * 2 >= in_height;
-
-		/* Force 5-tap if downscaling in NV12 color_mode - See TRM*/
-	        if(color_mode == OMAP_DSS_COLOR_NV12 && out_height < in_height)
-                        *three_tap = false;
-		
-                /* Force 5-tap if upscaling in NV12 color_mode*/
-	        if(color_mode == OMAP_DSS_COLOR_NV12 && out_height > in_height)
-                        *three_tap = false;
 
 		/*
 		 * Predecimation on OMAP4 still fetches the whole lines
@@ -3184,8 +3173,8 @@ static int _dispc_setup_plane(enum omap_plane plane,
 	unsigned int field_offset = 0;
 	u32 color_mask;
 	u32 fifo_high, fifo_low;
-	int pixpg = (color_mode &
-		(OMAP_DSS_COLOR_YUV2 | OMAP_DSS_COLOR_UYVY)) ? 2 : 1;
+	int pixpg = ((color_mode &
+		(OMAP_DSS_COLOR_YUV2 | OMAP_DSS_COLOR_UYVY)) && cpu_is_omap44xx()) ? 2 : 1;
 	unsigned long tiler_width, tiler_height;
 
 	if (paddr == 0)
@@ -3363,7 +3352,7 @@ static int _dispc_setup_plane(enum omap_plane plane,
 				x_decim, y_decim);
 
 	} else if (rotation_type == OMAP_DSS_ROT_VRFB) {
-		calc_vrfb_rotation_offset(rotation, mirror,
+		calc_vrfb_rotation_offset(rotation,  (mirror)?1:0,
 				screen_width, width, frame_height, color_mode,
 				fieldmode, field_offset,
 				&offset0, &offset1, &row_inc, &pix_inc);

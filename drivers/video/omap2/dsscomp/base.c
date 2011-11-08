@@ -28,6 +28,7 @@
 #include <video/dsscomp.h>
 #include <plat/dsscomp.h>
 
+#include <media/cma.h>
 #include "dsscomp.h"
 
 int debug;
@@ -200,6 +201,7 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 	int ret = -EINVAL, locked = 0;
 	int c;
 	int isr_state;
+	u32 new_paddr;
 
 	/* check overlay number */
 	if (!oi || oi->cfg.ix >= omap_dss_get_num_overlays())
@@ -350,11 +352,22 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 			info.p_uv_addr += crop.x * (bpp / 8) +
 				(crop.y >> 1) * cfg->stride;
 
-		/* no rotation on DMA buffer */
-		if (cfg->rotation & 3 || cfg->mirror)
-			goto quit;
-
-		info.rotation_type = OMAP_DSS_ROT_DMA;
+		if (cpu_is_omap44xx()) {
+			/* no rotation on DMA buffer */
+			if (cfg->rotation & 3 || cfg->mirror)
+				goto quit;
+			info.rotation_type = OMAP_DSS_ROT_DMA;
+		} else {
+			info.mirror = cfg->mirror;
+			info.rotation = cfg->rotation;
+			info.rotation_type = OMAP_DSS_ROT_VRFB;
+#if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
+			if (!cma_set_vrfb_ctx(info.paddr, &new_paddr, info.width, info.height, cfg->rotation, cfg->mirror)) {
+				info.paddr = new_paddr;
+				info.screen_width = 2048;
+			}
+#endif
+		}
 	}
 	info.max_x_decim = cfg->decim.max_x ? : 255;
 	info.max_y_decim = cfg->decim.max_y ? : 255;
@@ -444,6 +457,8 @@ int ovl_isr_stop(struct dsscomp_dev *cdev)
 		struct omap_overlay_info info;
 
 		ovl = omap_dss_get_overlay(cdev->isr.ovl_ix[i]);
+		if (!ovl)
+			continue;
 
 		ovl->get_overlay_info(ovl, &info);
 		info.enabled = 0;
@@ -466,6 +481,7 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 	struct omap_overlay_manager *mgr = NULL;
 	int i;
 	int r;
+	u32 new_paddr;
 	/* check overlay number */
 	if (!buf)
 		return -EINVAL;
@@ -599,11 +615,23 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 				info.p_uv_addr += crop.x * (bpp / 8) +
 					(crop.y >> 1) * cfg->stride;
 
-			/* no rotation on DMA buffer */
-			if (cfg->rotation & 3 || cfg->mirror)
-				return -EINVAL;
-
-			info.rotation_type = OMAP_DSS_ROT_DMA;
+			if (cpu_is_omap44xx()) {
+				/* no rotation on DMA buffer */
+				if (cfg->rotation & 3 || cfg->mirror)
+					return -EINVAL;
+				info.rotation_type = OMAP_DSS_ROT_DMA;
+			} else {
+				info.mirror = cfg->mirror;
+				info.rotation = cfg->rotation;
+				info.rotation_type = OMAP_DSS_ROT_VRFB;
+#if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
+				if (!cma_set_vrfb_ctx(info.paddr, &new_paddr, info.width, info.height, cfg->rotation, cfg->mirror))
+				{
+					info.paddr = new_paddr;
+					info.screen_width = 2048;
+				}
+#endif
+			}
 		}
 		info.max_x_decim = cfg->decim.max_x ? : 255;
 		info.max_y_decim = cfg->decim.max_y ? : 255;
@@ -686,7 +714,7 @@ int set_dss_mgr_info(struct dss2_mgr_info *mi)
 
 	if (!mi)
 		return -EINVAL;
-	mgr = find_dss_mgr(mi->ix);
+	mgr = find_dss_mgr(mi->display_index);
 	if (!mgr)
 		return -EINVAL;
 
@@ -749,9 +777,9 @@ void dump_comp_info(struct dsscomp_dev *cdev, struct dsscomp_setup_mgr_data *d,
 		 (d->mode & DSSCOMP_SETUP_MODE_APPLY) ? 'A' : '-',
 		 (d->mode & DSSCOMP_SETUP_MODE_DISPLAY) ? 'D' : '-',
 		 (d->mode & DSSCOMP_SETUP_MODE_CAPTURE) ? 'C' : '-',
-		 mi->ix,
-		 (mi->ix < cdev->num_displays && cdev->displays[mi->ix]) ?
-		 cdev->displays[mi->ix]->name : "NONE",
+		 mi->display_index,
+		 (mi->display_index < cdev->num_displays && cdev->displays[mi->display_index]) ?
+		 cdev->displays[mi->display_index]->name : "NONE",
 		 mi->alpha_blending, mi->default_color,
 		 mi->interlaced,
 		 d->num_ovls);

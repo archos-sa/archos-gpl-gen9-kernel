@@ -851,7 +851,15 @@ static bool is_bt_active(void)
 	struct kim_data_s       *kim_gdata;
 
 	pdev = &wl128x_device;
+
+	if (pdev == NULL)
+		return false;
+
 	kim_gdata = dev_get_drvdata(&pdev->dev);
+
+	if (kim_gdata == NULL)
+		return false;
+
 	if (st_ll_getstate(kim_gdata->core_data) != ST_LL_ASLEEP &&
 			st_ll_getstate(kim_gdata->core_data) != ST_LL_INVALID)
 		return true;
@@ -1671,8 +1679,8 @@ static void enable_board_wakeup_source(void)
 
 static struct omap_volt_pmic_info omap4430_pmic_core = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x61,
 	.i2c_cmdreg = 0x62,
@@ -1684,16 +1692,16 @@ static struct omap_volt_pmic_info omap4430_pmic_core = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 static struct omap_volt_pmic_info omap4460_pmic_core = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1705,17 +1713,17 @@ static struct omap_volt_pmic_info omap4460_pmic_core = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 
 static struct omap_volt_pmic_info omap_pmic_mpu = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1727,16 +1735,16 @@ static struct omap_volt_pmic_info omap_pmic_mpu = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x39,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x35,
 };
 
 static struct omap_volt_pmic_info omap_pmic_iva = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x5b,
 	.i2c_cmdreg = 0x5c,
@@ -1748,10 +1756,10 @@ static struct omap_volt_pmic_info omap_pmic_iva = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x2D,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x2B,
 };
 
 static struct omap_volt_vc_data vc_config = {

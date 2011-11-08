@@ -102,6 +102,7 @@ unsigned char avboot_major_version;
 unsigned char avboot_minor_version;
 unsigned char avboot_extra_version;
 
+char * omap_rev_name(void);
 
 #endif
 #ifdef MULTI_CPU
@@ -886,6 +887,7 @@ static int c_show(struct seq_file *m, void *v)
 		   system_serial_high, system_serial_low);
 
 #ifdef CONFIG_MACH_ARCHOS
+	seq_printf(m, "OMAP revision\t: %s\n", omap_rev_name());
 	seq_printf(m, "Boot\t\t: %d.%02d.%06d\n",
 			avboot_major_version,
 			avboot_minor_version,

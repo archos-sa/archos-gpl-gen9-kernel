@@ -92,6 +92,7 @@ static int twl6030_irq_thread(void *data)
 	long irq = (long)data;
 	static unsigned i2c_errors;
 	static const unsigned max_i2c_errors = 100;
+	unsigned long flags;
 	int ret;
 
 	current->flags |= PF_NOFREEZE;
@@ -123,6 +124,14 @@ static int twl6030_irq_thread(void *data)
 			continue;
 		}
 
+		// A write to REG_INT_STS_A clears all interrupt status registers
+		// All flags are cleared regardless of what you write.
+		ret = twl_i2c_write_u8(TWL_MODULE_PIH, 0,
+				REG_INT_STS_A); /* clear INT_STS_A */
+		if (ret)
+			pr_warning("twl6030: I2C error in clearing PIH ISR\n");
+
+
 		sts.bytes[3] = 0; /* Only 24 bits are valid*/
 
 		/*
@@ -143,7 +152,7 @@ static int twl6030_irq_thread(void *data)
 			sts.bytes[2] |= 0x08;
 #endif
 		for (i = 0; sts.int_sts; sts.int_sts >>= 1, i++) {
-			local_irq_disable();
+			local_irq_save(flags);
 			if (sts.int_sts & 0x1) {
 				int module_irq = twl6030_irq_base +
 					twl6030_interrupt_mapping[i];
@@ -170,7 +179,7 @@ static int twl6030_irq_thread(void *data)
 				 * if we get any surprises.
 				 */
 				if (d->status & IRQ_DISABLED) {
-					pr_warning("twl handler not called, irq is disabled!\n");
+					pr_debug("twl handler not called, irq is disabled!\n");
 					note_interrupt(module_irq, d,
 							IRQ_NONE);
 				}
@@ -178,12 +187,8 @@ static int twl6030_irq_thread(void *data)
 					d->handle_irq(module_irq, d);
 
 			}
-		local_irq_enable();
+			local_irq_restore(flags);
 		}
-		ret = twl_i2c_write(TWL_MODULE_PIH, sts.bytes,
-				REG_INT_STS_A, 3); /* clear INT_STS_A */
-		if (ret)
-			pr_warning("twl6030: I2C error in clearing PIH ISR\n");
 
 		enable_irq(irq);
 	}

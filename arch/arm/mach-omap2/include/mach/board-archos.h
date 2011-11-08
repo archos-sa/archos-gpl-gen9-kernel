@@ -41,6 +41,7 @@
 #include <linux/input/cypress-tma340.h>
 #include <linux/input/pixcir_i2c_tsp.h>
 #include <linux/input/goodix-gt80x.h>
+#include <linux/input/tr16c0-i2c.h>
 #include <asm/mach-types.h>
 
 struct omap_dss_device;
@@ -142,6 +143,7 @@ struct archos_usb_conf
 	unsigned int	usb_max_power;
 	int		enable_usb_ehci;
 	int		enable_usb_hub;
+	int		usb_hub_rst;
 	int		enable_5v;
 };
 
@@ -413,6 +415,7 @@ struct archos_leds_conf
 	unsigned char bkl_max;
 	unsigned bkl_invert:1;
 	unsigned pwr_invert:1;
+	int status_led;
 };
 
 struct archos_leds_config
@@ -519,9 +522,11 @@ struct archos_hdmi_conf {
 	int disp_sel;
 };
 
+struct regulator;
 struct archos_hdmi_platform_data {
 	void (*hdmi_pwr)(struct i2c_client *client, int on_off);
 	int pwr_gpio;
+	struct regulator *regulator;
 };
 
 struct archos_extdac_conf {
@@ -613,6 +618,7 @@ extern int __init archos_compass_init(struct akm8975_platform_data *pdata);
 
 extern int __init archos_touchscreen_tm340_init(struct cypress_tma340_platform_data *pdata);
 extern int __init archos_touchscreen_pixcir_init(struct pixcir_platform_data *pdata);
+extern int __init archos_touchscreen_tr16c0_init(struct tr16c0_platform_data *pdata);
 extern int __init archos_touchscreen_goodix_init(struct goodix_gt80x_platform_data *pdata);
 
 extern int __init archos_camera_mt9m114_init(void);
@@ -643,56 +649,9 @@ extern struct hardware_component hardware_comp;
 static inline bool machine_has_tps62361(void) {
 	return !!hardware_comp.tps62361;
 }
-
-static inline bool machine_has_hdd(void) {
-	return !!hardware_comp.hdd;
-}
-
-static inline bool machine_has_gps(void) {
-	return !!hardware_comp.gps;
-}
-
-static inline int machine_has_micro_sd(void) 
-{
-	return machine_is_archos_a32sd() |
-	       machine_is_archos_a35() |
-	       machine_is_archos_a35dm() |
-	       machine_is_archos_a43() | 
-	       machine_is_archos_a70s() |
-	       machine_is_archos_a101it();
-}
-
-/* device charges from the USB - then it is bus powered */
-static inline int machine_charges_from_USB(void) 
-{
-	return machine_is_archos_a28() |
-	       machine_is_archos_a32() |
-	       machine_is_archos_a32sd() |
-	       machine_is_archos_a35() |
-	       machine_is_archos_a35dm() |
-	       machine_is_archos_a43();
-}
-
 static inline int machine_has_usbhost_plug(void)
 {
 	return machine_is_archos_a101it();
-}
-
-static inline int machine_has_isp(void)
-{
-	return !machine_is_archos_a28() && !machine_is_archos_a35();
-}
-
-static inline int machine_has_venc(void)
-{
-    return machine_is_archos_a32() || machine_is_archos_a32sd();
-}
-
-static inline int machine_can_have_gfx_fullspeed(void)
-{
-    return !machine_has_venc() && 
-           !machine_is_archos_a28() && 
-           !machine_is_archos_a35();
 }
 
 #define hwrev_ptr(hwconf_ptr, revno) 	\

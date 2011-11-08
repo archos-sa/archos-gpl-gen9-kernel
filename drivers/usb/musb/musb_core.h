@@ -91,8 +91,8 @@ struct musb_ep;
 #define is_peripheral_enabled(musb)     ((musb)->board_mode != MUSB_HOST)
 #define is_host_enabled(musb)		((musb)->board_mode != MUSB_PERIPHERAL)
 #define is_otg_enabled(musb)		((musb)->board_mode == MUSB_OTG)
-#define is_peripheral_active(m)		is_peripheral_enabled(m)
-#define is_host_active(m)		is_host_enabled(m)
+#define is_peripheral_active(m)		(!(m)->is_host)
+#define is_host_active(m)		((m)->is_host)
 
 #else
 #define	is_peripheral_enabled(musb)	is_peripheral_capable()

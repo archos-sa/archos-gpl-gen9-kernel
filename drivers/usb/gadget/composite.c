@@ -300,6 +300,7 @@ static int config_buf(struct usb_configuration *config,
 {
 	struct usb_config_descriptor	*c = buf;
 	struct usb_interface_descriptor *intf;
+	struct usb_interface_assoc_descriptor *iad = NULL;
 	void				*next = buf + USB_DT_CONFIG_SIZE;
 	int				len = USB_BUFSIZ - USB_DT_CONFIG_SIZE;
 	struct usb_function		*f;
@@ -350,10 +351,23 @@ static int config_buf(struct usb_configuration *config,
 			if (intf->bDescriptorType == USB_DT_INTERFACE) {
 				/* don't increment bInterfaceNumber for alternate settings */
 				if (intf->bAlternateSetting == 0)
-					// intf->bInterfaceNumber = interfaceCount++;
-					interfaceCount++;
-				// else
-					// intf->bInterfaceNumber = interfaceCount - 1;
+					intf->bInterfaceNumber = interfaceCount++;
+				else
+					intf->bInterfaceNumber = interfaceCount - 1;
+				if (iad) {
+					iad->bFirstInterface =
+							intf->bInterfaceNumber;
+					iad = NULL;
+				}
+			} else if (intf->bDescriptorType ==
+					USB_DT_INTERFACE_ASSOCIATION) {
+				/* This will be first if it exists. Save
+				 * a pointer to it so we can properly set
+				 * bFirstInterface when we process the first
+				 * interface.
+				 */
+				iad = (struct usb_interface_assoc_descriptor *)
+						dest;
 			}
 			dest += intf->bLength;
 		}
@@ -823,12 +837,12 @@ int usb_string_ids_tab(struct usb_composite_dev *cdev, struct usb_string *str)
 
 /**
  * usb_string_ids_n() - allocate unused string IDs in batch
- * @cdev: the device whose string descriptor IDs are being allocated
+ * @c: the device whose string descriptor IDs are being allocated
  * @n: number of string IDs to allocate
  * Context: single threaded during gadget setup
  *
  * Returns the first requested ID.  This ID and next @n-1 IDs are now
- * valid IDs.  At least providind that @n is non zore because if it
+ * valid IDs.  At least provided that @n is non-zero because if it
  * is, returns last requested ID which is now very useful information.
  *
  * @usb_string_ids_n() is called from bind() callbacks to allocate

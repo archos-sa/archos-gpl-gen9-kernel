@@ -33,12 +33,14 @@
 
 #include <asm/cacheflush.h>
 
+#include "s_version.h"
 #include "tf_defs.h"
 #include "tf_comm.h"
 #include "tf_util.h"
 #include "tf_conn.h"
 #include "tf_zebra.h"
 #include "tf_crypto.h"
+#include "mach/omap4-common.h"
 
 /*--------------------------------------------------------------------------
  * Internal constants
@@ -80,6 +82,8 @@ u32 g_service_end;
 #define API_HAL_TASK_MGR_RPCINIT_INDEX          0x08
 #define API_HAL_KM_GETSECUREROMCODECRC_INDEX    0x0B
 #define API_HAL_SEC_L3_RAM_RESIZE_INDEX         0x17
+#define API_HAL_HWATURNOFF_INDEX                0x29
+#define API_HAL_ACTIVATEHWAPWRMGRPATCH_INDEX    0x2A
 
 #define API_HAL_RET_VALUE_OK	0x0
 
@@ -125,11 +129,9 @@ struct tf_init_buffer {
 
 #ifdef CONFIG_HAS_WAKELOCK
 static struct wake_lock g_tf_wake_lock;
-static atomic_t tf_wake_lock_count = ATOMIC_INIT(0);
 #endif
 
 static struct clockdomain *smc_l4_sec_clkdm;
-static atomic_t smc_l4_sec_clkdm_use_count = ATOMIC_INIT(0);
 
 static int __init tf_early_init(void)
 {
@@ -149,6 +151,84 @@ static int __init tf_early_init(void)
 	return 0;
 }
 early_initcall(tf_early_init);
+
+/*
+ * The timeout timer used to power off clocks
+ */
+#define INACTIVITY_TIMER_TIMEOUT 2000 /* ms */
+
+static DEFINE_SPINLOCK(clk_timer_lock);
+static struct timer_list tf_crypto_clock_timer;
+
+void tf_clock_timer_init(void)
+{
+	init_timer(&tf_crypto_clock_timer);
+
+	/* HWA Clocks Patch init */
+	omap4_secure_dispatcher(API_HAL_ACTIVATEHWAPWRMGRPATCH_INDEX,
+		0, 0, 0, 0, 0, 0);
+}
+
+u32 tf_try_disabling_secure_hwa_clocks(u32 mask)
+{
+	return omap4_secure_dispatcher(API_HAL_HWATURNOFF_INDEX,
+		FLAG_START_HAL_CRITICAL, 1, mask, 0, 0, 0);
+}
+
+static void tf_clock_timer_cb(unsigned long data)
+{
+	u32 ret;
+
+	dprintk(KERN_INFO "%s called...\n", __func__);
+
+	ret = tf_crypto_turn_off_clocks();
+
+	/*
+	 * From MShield-DK 1.3.3 sources:
+	 *
+	 * Digest: 1 << 0
+	 * DES   : 1 << 1
+	 * AES1  : 1 << 2
+	 * AES2  : 1 << 3
+	 */
+	if (ret & 0xf)
+		goto restart;
+
+	wake_unlock(&g_tf_wake_lock);
+	clkdm_allow_idle(smc_l4_sec_clkdm);
+	dprintk(KERN_INFO "%s success\n", __func__);
+	return;
+
+restart:
+	dprintk("%s: will wait one more time ret=0x%x\n", __func__, ret);
+	mod_timer(&tf_crypto_clock_timer,
+		jiffies + msecs_to_jiffies(INACTIVITY_TIMER_TIMEOUT));
+}
+
+
+void tf_clock_timer_start(void)
+{
+	unsigned long flags;
+	dprintk(KERN_INFO "%s\n", __func__);
+
+	wake_lock(&g_tf_wake_lock);
+	clkdm_wakeup(smc_l4_sec_clkdm);
+
+	spin_lock_irqsave(&clk_timer_lock, flags);
+
+	/* Stop the timer if already running */
+	if (timer_pending(&tf_crypto_clock_timer))
+		del_timer(&tf_crypto_clock_timer);
+
+	/* Configure the timer */
+	tf_crypto_clock_timer.expires =
+		 jiffies + msecs_to_jiffies(INACTIVITY_TIMER_TIMEOUT);
+	tf_crypto_clock_timer.function = tf_clock_timer_cb;
+
+	add_timer(&tf_crypto_clock_timer);
+
+	spin_unlock_irqrestore(&clk_timer_lock, flags);
+}
 
 /*
  * Function responsible for formatting parameters to pass from NS world to
@@ -186,18 +266,20 @@ u32 omap4_secure_dispatcher(u32 app_id, u32 flags, u32 nargs,
 	/*
 	 * Put L4 Secure clock domain to SW_WKUP so that modules are accessible
 	 */
-	tf_l4sec_clkdm_wakeup(false);
+	clkdm_wakeup(smc_l4_sec_clkdm);
 
 	local_irq_save(iflags);
-#ifdef DEBUG
-	BUG_ON((read_mpidr() & 0x00000003) != 0);
-#endif
+
 	/* proc_id is always 0 */
 	ret = schedule_secure_world(app_id, 0, flags, __pa(pub2sec_args));
 	local_irq_restore(iflags);
 
 	/* Restore the HW_SUP on L4 Sec clock domain so hardware can idle */
-	tf_l4sec_clkdm_allow_idle(false);
+	if ((app_id != API_HAL_HWATURNOFF_INDEX) &&
+	    (!timer_pending(&tf_crypto_clock_timer))) {
+		(void) tf_crypto_turn_off_clocks();
+		clkdm_allow_idle(smc_l4_sec_clkdm);
+	}
 
 	/*dprintk(KERN_INFO "omap4_secure_dispatcher()\n");*/
 
@@ -205,12 +287,14 @@ u32 omap4_secure_dispatcher(u32 app_id, u32 flags, u32 nargs,
 }
 
 /* Yields the Secure World */
-int tf_schedule_secure_world(struct tf_comm *comm, bool prepare_exit)
+int tf_schedule_secure_world(struct tf_comm *comm)
 {
 	int status = 0;
 	int ret;
 	unsigned long iflags;
 	u32 appli_id;
+
+	tf_clock_timer_start();
 
 	tf_set_current_time(comm);
 
@@ -220,16 +304,12 @@ int tf_schedule_secure_world(struct tf_comm *comm, bool prepare_exit)
 	case  RPC_ADVANCEMENT_NONE:
 		/* Return from IRQ */
 		appli_id = SMICODEPUB_IRQ_END;
-		if (prepare_exit)
-			status = STATUS_PENDING;
 		break;
 	case  RPC_ADVANCEMENT_PENDING:
 		/* nothing to do in this case */
 		goto exit;
 	default:
 	case RPC_ADVANCEMENT_FINISHED:
-		if (prepare_exit)
-			goto exit;
 		appli_id = SMICODEPUB_RPC_END;
 		g_RPC_advancement = RPC_ADVANCEMENT_NONE;
 		break;
@@ -386,9 +466,6 @@ static u32 tf_rpc_init(struct tf_comm *comm)
 
 	spin_unlock(&(comm->lock));
 
-	register_smc_public_crypto_digest();
-	register_smc_public_crypto_aes();
-
 	return rpc_error;
 }
 
@@ -419,8 +496,8 @@ int tf_rpc_execute(struct tf_comm *comm)
 	u32 rpc_command;
 	u32 rpc_error = RPC_NO;
 
-#ifdef DEBUG
-	BUG_ON((read_mpidr() & 0x00000003) != 0);
+#ifdef CONFIG_TF_DRIVER_DEBUG_SUPPORT
+	BUG_ON((hard_smp_processor_id() & 0x00000003) != 0);
 #endif
 
 	/* Lock the RPC */
@@ -465,37 +542,6 @@ int tf_rpc_execute(struct tf_comm *comm)
 		rpc_error);
 
 	return rpc_error;
-}
-
-/*--------------------------------------------------------------------------
- * L4 SEC Clock domain handling
- *-------------------------------------------------------------------------- */
-
-void tf_l4sec_clkdm_wakeup(bool wakelock)
-{
-	spin_lock(&tf_get_device()->sm.lock);
-#ifdef CONFIG_HAS_WAKELOCK
-	if (wakelock) {
-		atomic_inc(&tf_wake_lock_count);
-		wake_lock(&g_tf_wake_lock);
-	}
-#endif
-	atomic_inc(&smc_l4_sec_clkdm_use_count);
-	clkdm_wakeup(smc_l4_sec_clkdm);
-	spin_unlock(&tf_get_device()->sm.lock);
-}
-
-void tf_l4sec_clkdm_allow_idle(bool wakeunlock)
-{
-	spin_lock(&tf_get_device()->sm.lock);
-	if (atomic_dec_return(&smc_l4_sec_clkdm_use_count) == 0)
-		clkdm_allow_idle(smc_l4_sec_clkdm);
-#ifdef CONFIG_HAS_WAKELOCK
-	if (wakeunlock)
-		if (atomic_dec_return(&tf_wake_lock_count) == 0)
-			wake_unlock(&g_tf_wake_lock);
-#endif
-	spin_unlock(&tf_get_device()->sm.lock);
 }
 
 /*--------------------------------------------------------------------------
@@ -570,101 +616,10 @@ int tf_pm_hibernate(struct tf_comm *comm)
 	return 0;
 }
 
-#ifdef CONFIG_SMC_KERNEL_CRYPTO
-#define DELAYED_RESUME_NONE	0
-#define DELAYED_RESUME_PENDING	1
-#define DELAYED_RESUME_ONGOING	2
-
-static DEFINE_SPINLOCK(tf_delayed_resume_lock);
-static int tf_need_delayed_resume = DELAYED_RESUME_NONE;
-
-int tf_delayed_secure_resume(void)
-{
-	int ret;
-	union tf_command message;
-	union tf_answer answer;
-	struct tf_device *dev = tf_get_device();
-
-	spin_lock(&tf_delayed_resume_lock);
-	if (likely(tf_need_delayed_resume == DELAYED_RESUME_NONE)) {
-		spin_unlock(&tf_delayed_resume_lock);
-		return 0;
-	}
-
-	if (unlikely(tf_need_delayed_resume == DELAYED_RESUME_ONGOING)) {
-		spin_unlock(&tf_delayed_resume_lock);
-
-		/*
-		 * Wait for the other caller to actually finish the delayed
-		 * resume operation
-		 */
-		while (tf_need_delayed_resume != DELAYED_RESUME_NONE)
-			cpu_relax();
-
-		return 0;
-	}
-
-	tf_need_delayed_resume = DELAYED_RESUME_ONGOING;
-	spin_unlock(&tf_delayed_resume_lock);
-
-	/*
-	 * When the system leaves CORE OFF, HWA are configured as secure.  We
-	 * need them as public for the Linux Crypto API.
-	 */
-	memset(&message, 0, sizeof(message));
-
-	message.header.message_type = TF_MESSAGE_TYPE_MANAGEMENT;
-	message.header.message_size =
-		(sizeof(struct tf_command_management) -
-			sizeof(struct tf_command_header))/sizeof(u32);
-	message.management.command =
-		TF_MANAGEMENT_RESUME_FROM_CORE_OFF;
-
-	ret = tf_send_receive(&dev->sm, &message, &answer, NULL, false);
-	if (ret) {
-		printk(KERN_ERR "tf_pm_resume(%p): "
-			"tf_send_receive failed (error %d)!\n",
-			&dev->sm, ret);
-
-		unregister_smc_public_crypto_digest();
-		unregister_smc_public_crypto_aes();
-		return ret;
-	}
-
-	if (answer.header.error_code) {
-		unregister_smc_public_crypto_digest();
-		unregister_smc_public_crypto_aes();
-	}
-
-	spin_lock(&tf_delayed_resume_lock);
-	tf_need_delayed_resume = DELAYED_RESUME_NONE;
-	spin_unlock(&tf_delayed_resume_lock);
-
-	return answer.header.error_code;
-}
-#endif
-
 int tf_pm_resume(struct tf_comm *comm)
 {
 
 	dprintk(KERN_INFO "tf_pm_resume()\n");
-	#if 0
-	{
-		void *workspace_va;
-		struct tf_device *dev = tf_get_device();
-		workspace_va = ioremap(dev->workspace_addr,
-			dev->workspace_size);
-		printk(KERN_INFO
-		"Read first word of workspace [0x%x]\n",
-		*(uint32_t *)workspace_va);
-	}
-	#endif
-
-#ifdef CONFIG_SMC_KERNEL_CRYPTO
-	spin_lock(&tf_delayed_resume_lock);
-	tf_need_delayed_resume = DELAYED_RESUME_PENDING;
-	spin_unlock(&tf_delayed_resume_lock);
-#endif
 	return 0;
 }
 
@@ -687,10 +642,10 @@ int tf_init(struct tf_comm *comm)
 	if (tf_crypto_init() != PUBLIC_CRYPTO_OPERATION_SUCCESS)
 		return -EFAULT;
 
-	if (omap_type() == OMAP2_DEVICE_TYPE_GP) {
-		register_smc_public_crypto_digest();
-		register_smc_public_crypto_aes();
-	}
+	pr_info("%s\n", S_VERSION_STRING);
+
+	register_smc_public_crypto_digest();
+	register_smc_public_crypto_aes();
 
 	return 0;
 }
@@ -721,7 +676,7 @@ int tf_start(struct tf_comm *comm,
 		dprintk(KERN_ERR "sched_setaffinity #1 -> 0x%lX", ret_affinity);
 #endif
 
-	tf_l4sec_clkdm_wakeup(true);
+	tf_clock_timer_start();
 
 	workspace_size -= SZ_1M;
 	sdp_backing_store_addr = workspace_addr + workspace_size;
@@ -927,7 +882,7 @@ loop:
 
 	mutex_unlock(&(comm->rpc_mutex));
 
-	ret = tf_schedule_secure_world(comm, false);
+	ret = tf_schedule_secure_world(comm);
 	if (ret != 0) {
 		printk(KERN_ERR "SMC: Error while loading the PA [0x%x]\n",
 			ret);
@@ -940,16 +895,6 @@ loop:
 	set_bit(TF_COMM_FLAG_PA_AVAILABLE, &comm->flags);
 	wake_up(&(comm->wait_queue));
 	ret = 0;
-
-	#if 0
-	{
-		void *workspace_va;
-		workspace_va = ioremap(workspace_addr, workspace_size);
-		printk(KERN_INFO
-		"Read first word of workspace [0x%x]\n",
-		*(uint32_t *)workspace_va);
-	}
-	#endif
 
 	/* Workaround for issue #6081 */
 	if ((omap_rev() && 0xFFF000FF) == OMAP443X_CLASS)
@@ -985,8 +930,6 @@ exit:
 	if (ret_affinity != 0)
 		dprintk(KERN_ERR "sched_setaffinity #2 -> 0x%lX", ret_affinity);
 #endif
-
-	tf_l4sec_clkdm_allow_idle(true);
 
 	if (ret > 0)
 		ret = -EFAULT;

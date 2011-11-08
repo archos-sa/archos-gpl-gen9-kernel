@@ -667,6 +667,8 @@ source "drivers/media/video/omapgfx/Kconfig"
 
 source "drivers/media/video/bt8xx/Kconfig"
 
+source "drivers/media/video/cma/Kconfig"
+
 config VIDEO_PMS
 	tristate "Mediavision Pro Movie Studio Video For Linux"
 	depends on ISA && VIDEO_V4L2

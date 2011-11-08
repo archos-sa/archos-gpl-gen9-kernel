@@ -33,6 +33,7 @@
 #include <mach/emif.h>
 #include <mach/lpddr2-elpida.h>
 #include <mach/lpddr2-micron.h>
+#include <mach/dmm.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -79,6 +80,12 @@ static struct akm8975_platform_data board_akm8975_pdata;
 static struct gpio_vbus_mach_info archos_vbus_info;
 static struct wake_lock uart_lock;
 
+#ifdef CONFIG_ARCHOS_FORCE_UART3_ON_DPDM
+#define uart3_on_usb true
+#else
+#define uart3_on_usb false
+#endif
+
 #define BLUETOOTH_UART UART2
 
 #define GPIO_5V_PWRON            36	/* fixme: from config tags? */
@@ -94,7 +101,8 @@ static void remux_regulator_gpio(int gpio)
 		break;
 
 	case 104:
-		omap_mux_init_signal("gpmc_ncs7.gpio_104", OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
+		omap_mux_init_signal("gpmc_ncs7.gpio_104",
+				OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
 		break;
 	}
 }
@@ -103,7 +111,7 @@ static void remux_regulator_gpio(int gpio)
 static struct regulator_consumer_supply fixed_reg_5v_consumer[] = {
 	REGULATOR_SUPPLY("hsusb_vbus0", "uhhtll-omap"),
 	REGULATOR_SUPPLY("5V", "vbus_musb"),
-	REGULATOR_SUPPLY("5V", "omap_pwm_led.0"),
+	REGULATOR_SUPPLY("5V", "4-005c"),
 };
 static struct regulator_init_data fixed_reg_5v_initdata = {
 	.constraints = {
@@ -202,8 +210,8 @@ static struct regulator_init_data fixed_reg_vbus_musb_initdata = {
 	.constraints = {
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
 	},
-	
-	.supply_regulator 	= "5V", 
+
+	.supply_regulator 	= "5V",
 
 	.consumer_supplies      = fixed_reg_vbus_musb_consumer,
 	.num_consumer_supplies  = ARRAY_SIZE(fixed_reg_vbus_musb_consumer),
@@ -318,41 +326,41 @@ static struct archos_sata_config sata_config __initdata = {
 	.nrev = 6,
 	.rev[0] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 	},
 	.rev[1] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 		.usb_suspend = 1,
 	},
 	.rev[2] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 		.usb_suspend = 1,
 	},
 	.rev[3] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 		.usb_suspend = 1,
 	},
 	.rev[4] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 		.usb_suspend = 1,
 	},
 	.rev[5] = {
 		.sata_power = 135,
-		.sata_ready = UNUSED_GPIO,
+		.sata_ready = 137,
 		.hdd_power  = 100,
 		.hdd_power_mux = "gpmc_wait2.gpio_100",
 		.usb_suspend = 1,
@@ -557,11 +565,11 @@ static struct ti_st_plat_data wilink_pdata = {
 static int __init wlan_1271_config(void)
 {
 	const struct archos_wifi_bt_dev_conf *conf_ptr;
-	
+
 	conf_ptr = hwrev_ptr(&board_wifi_bt_config, hardware_rev);
 	if (IS_ERR(conf_ptr))
 		return -EINVAL;
-	
+
 	wilink_pdata.nshutdown_gpio = conf_ptr->bt_power;
 	remux_regulator_gpio(conf_ptr->bt_power);
 
@@ -849,6 +857,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.power_led = UNUSED_GPIO,
 		.backlight_led = { .timer = -1 },
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 200,
 	},
@@ -860,7 +869,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_freq = 200,
 	},
 	.rev[2] = {
-		.power_led = UNUSED_GPIO,		
+		.power_led = UNUSED_GPIO,
 		.backlight_led = {
 			.src = OMAP_DM_PWM,
 			.timer = 8,
@@ -868,6 +877,7 @@ static struct archos_leds_config leds_config __initdata = {
 			.signal_off = "uart3_rx_irrx.safe_mode",
 		},
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
 		.bkl_max = 254,
@@ -881,6 +891,7 @@ static struct archos_leds_config leds_config __initdata = {
 			.signal_off = "uart3_rx_irrx.safe_mode",
 		},
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
 		.bkl_max = 254,
@@ -894,6 +905,7 @@ static struct archos_leds_config leds_config __initdata = {
 			.signal_off = "uart3_rx_irrx.safe_mode",
 		},
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
 		.bkl_max = 221,
@@ -907,6 +919,7 @@ static struct archos_leds_config leds_config __initdata = {
 			.signal_off = "uart3_rx_irrx.safe_mode",
 		},
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
 		.bkl_max = 221,
@@ -1090,7 +1103,7 @@ static int archos_panel_enable_hdmi(struct omap_dss_device *dssdev)
 {
 	if (!gpio_is_valid(hdmi_pwron))
 		return -EINVAL;
-	
+
 	gpio_set_value(hdmi_pwron, 1);
 	return 0;
 }
@@ -1107,7 +1120,7 @@ static __init int archos_hdmi_init(void)
 	int ret;
 	void __iomem *phymux_base = NULL;
 	unsigned int dsimux = 0xFFFFFFFF;
-	
+
 	phymux_base = ioremap(0x4A100000, 0x1000);
 	/* Turning on DSI PHY Mux*/
 	__raw_writel(dsimux, phymux_base+0x618);
@@ -1120,7 +1133,7 @@ static __init int archos_hdmi_init(void)
 	ret = gpio_request(conf->hdmi_pwr , "hdmi_pwron");
 	if (IS_ERR_VALUE(ret))
 		return -EINVAL;
-	
+
 	hdmi_pwron = conf->hdmi_pwr;
 	gpio_export(hdmi_pwron, false);
 	gpio_direction_output(hdmi_pwron, 0);
@@ -1414,6 +1427,7 @@ static struct regulator_init_data board_vusb = {
 			.enabled	= false,
 			.disabled	= true,
 		},
+		.always_on	= uart3_on_usb,
 	},
 };
 
@@ -1462,6 +1476,12 @@ static struct twl4030_bci_platform_data board_bci_data = {
 	.tblsize			= ARRAY_SIZE(board_batt_table),
 };
 
+static struct regulator_init_data board_clk32kg = {
+       .constraints = {
+		.valid_ops_mask         = REGULATOR_CHANGE_STATUS,
+       },
+};
+
 static struct twl4030_platform_data board_twldata = {
 	.irq_base	= TWL6030_IRQ_BASE,
 	.irq_end	= TWL6030_IRQ_END,
@@ -1481,6 +1501,7 @@ static struct twl4030_platform_data board_twldata = {
 	/* children */
 	.codec          = &twl6040_codec,
 	.usb            = &board_twl6040_usb_data,
+	.clk32kg	= &board_clk32kg,
 };
 
 
@@ -1503,11 +1524,18 @@ static struct i2c_board_info __initdata board_i2c_boardinfo[] = {
  * LPDDR2 Configuration Data
  * The memory organisation is as below :
  *	EMIF1 - CS0 -	2 Gb
- *		CS1 -	
+ *		CS1 -
  *	EMIF2 - CS0 -	2 Gb
- *		CS1 -	
+ *		CS1 -
  *	--------------------
  *	TOTAL -		4 Gb
+ *
+ *or 	EMIF1 - CS0 -	2 Gb
+ *		CS1 -	2 Gb
+ *	EMIF2 - CS0 -	2 Gb
+ *		CS1 -	2 Gb
+ *	--------------------
+ *	TOTAL -		8 Gb
  *
  * Same devices installed on EMIF1 and EMIF2
  */
@@ -1523,6 +1551,10 @@ static __initdata struct emif_device_details emif_devices[] = {
 	{
 	.cs0_device = &elpida_2G_S4,
 	.cs1_device = NULL
+	},
+	{
+	.cs0_device = &elpida_2G_S4,
+	.cs1_device = &elpida_2G_S4,
 	},
 };
 
@@ -1569,8 +1601,8 @@ static void enable_board_wakeup_source(void)
 
 static struct omap_volt_pmic_info omap_pmic_VCORE3 = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x61,
 	.i2c_cmdreg = 0x62,
@@ -1582,16 +1614,16 @@ static struct omap_volt_pmic_info omap_pmic_VCORE3 = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 static struct omap_volt_pmic_info omap4460_pmic_VCORE1 = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1603,16 +1635,16 @@ static struct omap_volt_pmic_info omap4460_pmic_VCORE1 = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 static struct omap_volt_pmic_info omap4430_pmic_VCORE1 = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1624,16 +1656,16 @@ static struct omap_volt_pmic_info omap4430_pmic_VCORE1 = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x39,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x35,
 };
 
 static struct omap_volt_pmic_info omap_pmic_VCORE2 = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x5b,
 	.i2c_cmdreg = 0x5c,
@@ -1645,39 +1677,54 @@ static struct omap_volt_pmic_info omap_pmic_VCORE2 = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x2D,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x2B,
 };
 
 static struct omap_volt_vc_data vc_config = {
-	.vdd0_on = 1375000,        /* 1.375v */
-	.vdd0_onlp = 1375000,      /* 1.375v */
-	.vdd0_ret = 837500,       /* 0.8375v */
+	.vdd0_on = 1375000,	/* 1.375v */
+	.vdd0_onlp = 1375000,	/* 1.375v */
+	.vdd0_ret = 750000,	/* 0.75v */
 	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1300000,        /* 1.3v */
-	.vdd1_onlp = 1300000,      /* 1.3v */
-	.vdd1_ret = 837500,       /* 0.8375v */
+	.vdd1_on = 1300000,	/* 1.3v */
+	.vdd1_onlp = 1300000,	/* 1.3v */
+	.vdd1_ret = 750000,	/* 0.75v */
 	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1200000,        /* 1.2v */
-	.vdd2_onlp = 1200000,      /* 1.2v */
-	.vdd2_ret = 837500,       /* .8375v */
+	.vdd2_on = 1200000,	/* 1.2v */
+	.vdd2_onlp = 1200000,	/* 1.2v */
+	.vdd2_ret = 750000,	/* .75v */
+	.vdd2_off = 0,		/* 0 v */
+};
+
+static struct omap_volt_vc_data vc_config_old = {
+	.vdd0_on = 1350000,	/* 1.35v */
+	.vdd0_onlp = 1350000,	/* 1.35v */
+	.vdd0_ret = 837500,	/* 0.837500v */
+	.vdd0_off = 0,		/* 0 v */
+	.vdd1_on = 1100000,	/* 1.1v */
+	.vdd1_onlp = 1100000,	/* 1.1v */
+	.vdd1_ret = 837500,	/* 0.837500v */
+	.vdd1_off = 0,		/* 0 v */
+	.vdd2_on = 1100000,	/* 1.1v */
+	.vdd2_onlp = 1100000,	/* 1.1v */
+	.vdd2_ret = 837500,	/* .837500v */
 	.vdd2_off = 0,		/* 0 v */
 };
 
 static struct omap_volt_vc_data vc446x_config = {
 	.vdd0_on = 1350000,	/* 1.35v */
 	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 837500,	/* 0.8375v */
+	.vdd0_ret = 750000,	/* 0.75v */
 	.vdd0_off = 0,		/* 0 v */
 	.vdd1_on = 1350000,	/* 1.35v */
 	.vdd1_onlp = 1350000,	/* 1.35v */
-	.vdd1_ret = 837500,	/* 0.8375v */
+	.vdd1_ret = 750000,	/* 0.75v */
 	.vdd1_off = 0,		/* 0 v */
 	.vdd2_on = 1350000,	/* 1.35v */
 	.vdd2_onlp = 1350000,	/* 1.35v */
-	.vdd2_ret = 837500,	/* .8375v */
+	.vdd2_ret = 750000,	/* .75v */
 	.vdd2_off = 0,		/* 0 v */
 };
 
@@ -1865,6 +1912,9 @@ static void __init board_init(void)
 		} else	if (!strcmp(sdram->product, "H9TKNNN4KDMPQR")) {	// HYNIX
 			printk(KERN_INFO "DDR type hynix\n");
 			emif_config = &emif_devices[2];
+		} else	if (!strcmp(sdram->product, "EDB8064B1PB")) {		// Elpida 1Go
+			printk(KERN_INFO "DDR type elpida 1Go\n");
+			emif_config = &emif_devices[3];
 		} else {
 			printk(KERN_INFO "DDR type default\n");
 			emif_config = &emif_devices[0];
@@ -1917,22 +1967,47 @@ static void __init board_init(void)
 
 	/* UART configuration */
 	if (hardware_rev >= 3) {
-		omap_mux_init_signal("uart3_tx_irtx.safe_mode", OMAP_PIN_INPUT_PULLDOWN);
-		omap_serial_platform_data[2].padconf = 0;
-		omap_serial_platform_data[2].padconf_wake_ev = 0;
-		omap_serial_platform_data[2].wk_mask = 0;
+		if (uart3_on_usb) {
+			/* configure padmux to route uart3 to usb-otg dp/dm */
+			omap_mux_init_signal("uart3_rx_irrx.safe_mode", 
+					OMAP_PIN_INPUT_PULLDOWN);
+			omap_mux_init_signal("usba0_otg_dm.uart3_tx_irtx", 
+					OMAP_PIN_INPUT | OMAP_PIN_OFF_INPUT_PULLUP);
+			omap_mux_init_signal("usba0_otg_dp.uart3_rx_irrx",
+					OMAP_PIN_INPUT_PULLUP | OMAP_PIN_OFF_INPUT_PULLUP);
+
+			/* set usb-otg phy to gpio mode */
+			omap4_ctrl_pad_writel((1UL << 29), 
+					OMAP4_CTRL_MODULE_PAD_CORE_CONTROL_USB2PHYCORE);
+			/* configure pads for wakeup */
+			omap_serial_platform_data[2].padconf = 
+					OMAP4_CTRL_MODULE_PAD_USBA0_OTG_DP_OFFSET;
+			omap_serial_platform_data[2].padconf_wake_ev = 
+					OMAP4_CTRL_MODULE_PAD_CORE_PADCONF_WAKEUPEVENT_5;
+			omap_serial_platform_data[2].wk_mask = 
+					OMAP4_USBA0_OTG_DP_DUPLICATEWAKEUPEVENT_MASK;	
+		} else {
+			omap_mux_init_signal("uart3_tx_irtx.safe_mode", 
+					OMAP_PIN_INPUT_PULLDOWN);
+			omap_serial_platform_data[2].padconf = 0;
+			omap_serial_platform_data[2].padconf_wake_ev = 0;
+			omap_serial_platform_data[2].wk_mask = 0;
+		}
+		
 	}
 	omap_serial_init(omap_serial_platform_data);
 
-	usb_musb_init(&musb_board_data);
+	if (!uart3_on_usb)
+		usb_musb_init(&musb_board_data);
 
 	omap4_twl6030_hsmmc_init(mmc);
 
 	archos_omap4_ehci_init();
 	archos_camera_mt9m114_init();
+	omap_dmm_init();
 	omap_display_init(&board_dss_data);
 	enable_board_wakeup_source();
-	
+
 	if ((hardware_rev > 1) || cpu_is_omap446x()) {
 		hardware_comp.tps62361 = 1;
 		tps62361_board_init();
@@ -1947,15 +2022,20 @@ static void __init board_init(void)
 		omap_voltage_register_pmic(&omap_pmic_VCORE3, "core");
 		omap_voltage_register_pmic(&omap4430_pmic_VCORE1, "mpu");
 	}
-	
+
 	regulator_has_full_constraints();
 
 	omap_voltage_register_pmic(&omap_pmic_VCORE2, "iva");
 
-	if (/*(hardware_rev > 1) ||*/ cpu_is_omap446x())
+	if (cpu_is_omap446x())
 		omap_voltage_init_vc(&vc446x_config);
-	else
-		omap_voltage_init_vc(&vc_config);
+	else {
+		if (omap_rev() <= OMAP4430_REV_ES2_1) {
+			omap_voltage_init_vc(&vc_config_old);
+		} else {
+			omap_voltage_init_vc(&vc_config);
+		}
+	}
 }
 
 static void __init board_map_io(void)
@@ -1966,7 +2046,7 @@ static void __init board_map_io(void)
 
 MACHINE_START(ARCHOS_A101H, "ARCHOS A101H Board")
 	.phys_io	= 0x48000000,
-	.io_pg_offst    = ((0xfa000000) >> 18) & 0xfffc, 
+	.io_pg_offst    = ((0xfa000000) >> 18) & 0xfffc,
 	.boot_params	= 0x80000100,
 	.map_io		= board_map_io,
 	.fixup		= fixup_archos,

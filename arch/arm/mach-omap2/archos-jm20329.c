@@ -21,6 +21,10 @@
 #include "mux.h"
 
 #define DEVICE_NAME	"jm20329"
+//#define JM20329_DEBUG
+
+#define SATA_WAKEUP_RETRIES 5
+#define SATA_SUSPEND_RETRIES 5
 
 static struct jm20329_data {
 	struct clk *auxclk1;
@@ -30,8 +34,10 @@ static struct jm20329_data {
 	struct regulator *hdd_5v;
 	int gpio_hdd_power;
 	int gpio_sata_power;
+	int gpio_sata_ready;
 	const char *mux_hdd_power;
 	const char *mux_sata_power;
+	const char *mux_sata_ready;
 } jm20329_data; 
 
 static void remux_regulator_gpio(int gpio)
@@ -312,10 +318,25 @@ static ssize_t set_clock(struct device* dev,
 	return count;
 }
 
+static ssize_t show_sata_ready(struct device* dev,
+		struct device_attribute * attr, char* buf)
+{
+	struct jm20329_device *jm20329 = dev_get_drvdata(dev);
+	struct jm20329_data *priv = jm20329->data;
+	int on = -1;
+	if (gpio_is_valid(priv->gpio_sata_ready))
+		on = gpio_get_value(priv->gpio_sata_ready);
+	return snprintf(buf, PAGE_SIZE, "%i\n", on);
+}
+
+
 static DEVICE_ATTR(timeout_counter, S_IWUSR | S_IRUGO, show_timeout, set_timeout);
 static DEVICE_ATTR(timeout, S_IWUSR | S_IRUGO, show_timeout_reset, set_timeout_reset);
-//static DEVICE_ATTR(sata_vcc, S_IWUSR | S_IRUGO, show_sata_vcc, set_sata_vcc);
-//static DEVICE_ATTR(clock, S_IWUSR , NULL, set_clock);
+static DEVICE_ATTR(sata_ready, S_IRUGO, show_sata_ready, NULL);
+#ifdef JM20329_DEBUG
+static DEVICE_ATTR(sata_vcc, S_IWUSR | S_IRUGO, show_sata_vcc, set_sata_vcc);
+static DEVICE_ATTR(clock, S_IWUSR , NULL, set_clock);
+#endif //JM20329_DEBUG
 
 static void release_sata_clk(struct jm20329_device *jm20329)
 {
@@ -331,6 +352,14 @@ static void release_sata_clk(struct jm20329_device *jm20329)
 static int jm20329_platform_disconnect(struct jm20329_device *jm20329)
 {
 	struct jm20329_data *priv = jm20329->data;
+	int retries = 0;
+
+	if (gpio_is_valid(priv->gpio_hdd_power)) {
+		while ((gpio_get_value(priv->gpio_hdd_power)) && (retries++ < SATA_SUSPEND_RETRIES)) {
+			// Wait for the hdd to be powered off by the controller
+			msleep(100);
+		}
+	}
 
 	if (priv->auxclk1)
 		clk_disable(priv->auxclk1);
@@ -349,10 +378,14 @@ static int jm20329_platform_disconnect(struct jm20329_device *jm20329)
 extern void archos_hub_enable(bool en);
 static int jm20329_platform_wakeup(struct jm20329_device *jm20329)
 {
+	int retries = 0;
 	struct jm20329_data *priv = jm20329->data;
 #if 0
 	gpio_direction_input(priv->gpio_hdd_power);
 #endif
+
+	gpio_direction_input(priv->gpio_sata_ready);
+
 	if (priv->auxclk1)
 		clk_enable(priv->auxclk1);
 	
@@ -360,6 +393,19 @@ static int jm20329_platform_wakeup(struct jm20329_device *jm20329)
 
 	if (priv->sata_vcc)
 		regulator_enable(priv->sata_vcc);
+
+	msleep(100);
+
+	if (gpio_is_valid(priv->gpio_sata_ready)) {
+		while ((!gpio_get_value(priv->gpio_sata_ready)) && (retries++ < SATA_WAKEUP_RETRIES))
+		{
+			printk("JM20329 reset error - trying again\n");
+			regulator_disable(priv->sata_vcc);
+			msleep(150);
+			regulator_enable(priv->sata_vcc);
+			msleep(100);
+		}
+	}
 
 	return 0;
 }
@@ -398,6 +444,7 @@ static int __init jm20329_platform_init(struct jm20329_device *jm20329)
 	jm20329->data = priv;
 	priv->gpio_hdd_power = -1;
 	priv->gpio_sata_power = -1;
+	priv->gpio_sata_ready = -1;
 	
 	sata_config = omap_get_config(ARCHOS_TAG_SATA,
 			struct archos_sata_config);
@@ -433,6 +480,16 @@ static int __init jm20329_platform_init(struct jm20329_device *jm20329)
 		}
 	}
 
+	if (gpio_is_valid(conf->sata_ready)) {
+		int ret = gpio_request(conf->sata_ready, "sata_ready");
+		if (!IS_ERR_VALUE(ret)) {
+			gpio_direction_input(conf->sata_ready);
+			priv->gpio_sata_ready = conf->sata_ready;
+			priv->mux_sata_ready = conf->sata_ready_mux;
+			remux_regulator_gpio(priv->gpio_sata_ready);
+		}
+	}
+
 	platform_add_devices(sata_devices, ARRAY_SIZE(sata_devices));
 
 	priv->sata_vcc = regulator_get(&jm20329_pdev.dev, "sata_vcc");
@@ -461,7 +518,13 @@ static int __init jm20329_platform_init(struct jm20329_device *jm20329)
 		printk("%s: Could not create sysfs entry\n", __func__);
 		return ret;
 	}
-#if 0
+	ret = device_create_file(&jm20329_pdev.dev, &dev_attr_sata_ready);
+	if (ret) {
+		printk("%s: Could not create sysfs entry\n", __func__);
+		return ret;
+	}
+
+#ifdef JM20329_DEBUG
 	ret = device_create_file(&jm20329_pdev.dev, &dev_attr_sata_vcc);	
 	if (ret) {
 		printk("%s: Could not create sysfs entry\n", __func__);
@@ -472,7 +535,7 @@ static int __init jm20329_platform_init(struct jm20329_device *jm20329)
 		printk("%s: Could not create sysfs entry\n", __func__);
 		return ret;
 	}
-#endif
+#endif //JM20329_DEBUG
 
 	return 0;
 
@@ -486,6 +549,9 @@ initfail1:
 
 static int __init jm20329_init(void)
 {
+	if (cpu_is_omap34xx())
+		jm20329.interface_string = "1-2.1:1.0";
+	
 #if defined(CONFIG_USB_STORAGE_JM20329) || \
 		defined(CONFIG_USB_STORAGE_JM20329_MODULE)
 	return platform_device_register(&jm20329_pdev);

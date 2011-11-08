@@ -37,6 +37,7 @@ static LIST_HEAD(display_list);
 
 static struct {
     struct mutex power_lock;
+    bool initalized;
 } display;
 
 int omapdss_display_enable(struct omap_dss_device *dssdev)
@@ -688,6 +689,7 @@ void dss_init_device(struct platform_device *pdev,
 		DSSERR("failed to create sysfs display link\n");
 
 	mutex_init(&display.power_lock);
+	display.initalized = true;
 }
 
 void dss_uninit_device(struct platform_device *pdev,
@@ -740,6 +742,9 @@ int dss_suspend_all_devices(void)
 	int r;
 	struct bus_type *bus = dss_get_bus();
 
+	if (!display.initalized)
+		return;
+
 	mutex_lock(&display.power_lock);
 	r = bus_for_each_dev(bus, NULL, NULL, dss_suspend_device);
 	mutex_unlock(&display.power_lock);
@@ -785,6 +790,9 @@ int dss_resume_all_devices(void)
 	struct bus_type *bus = dss_get_bus();
 	int r = 0;
 
+	if (!display.initalized)
+		return;
+
 	mutex_lock(&display.power_lock);
 	r = bus_for_each_dev(bus, NULL, NULL, dss_resume_device);
 	mutex_unlock(&display.power_lock);
@@ -825,6 +833,7 @@ int dss_mainclk_state_disable(bool do_clk_disable)
 		return 0;
 	}
 }
+EXPORT_SYMBOL(dss_mainclk_state_disable);
 
 /*
  * enables mainclk (DSS clocks on OMAP4 if any device is enabled.
@@ -847,6 +856,7 @@ int dss_mainclk_state_enable(void)
 		return -EAGAIN;
 	}
 }
+EXPORT_SYMBOL(dss_mainclk_state_enable);
 
 static int dss_disable_device(struct device *dev, void *data)
 {
@@ -864,6 +874,9 @@ static int dss_disable_device(struct device *dev, void *data)
 void dss_disable_all_devices(void)
 {
 	struct bus_type *bus = dss_get_bus();
+	if (!display.initalized)
+		return;
+		
 	mutex_lock(&display.power_lock);
 	bus_for_each_dev(bus, NULL, NULL, dss_disable_device);
 	mutex_unlock(&display.power_lock);

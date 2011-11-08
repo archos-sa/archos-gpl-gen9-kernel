@@ -10,6 +10,7 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/string.h>
 #include <asm/setup.h>
 #include <asm/mach/arch.h>
 #include <asm/mach-types.h>
@@ -37,26 +38,69 @@ static char command_line[][COMMAND_LINE_SIZE] __initdata = {
 #else
 	[4] = "",
 #endif
+#ifdef CONFIG_CMDLINE_A70S2
+	[5] = CONFIG_CMDLINE_A70S2,
+#else
 	[5] = "",
+#endif
+#ifdef CONFIG_CMDLINE_A70H2
+	[6] = CONFIG_CMDLINE_A70H2,
+#else
 	[6] = "",
+#endif
+#ifdef CONFIG_CMDLINE_LUDO
+	[7] = CONFIG_CMDLINE_LUDO,
+#else
+	[7] = "",
+#endif
 };
 
 void __init fixup_archos(struct machine_desc *desc,
 		struct tag *tags, char **cmdline, struct meminfo *mi)
 {
+	struct tag *t = tags;
+
 	if (machine_is_archos_a80s() || machine_is_archos_a101s() ||
-	    machine_is_omap_4430sdp()) {
+	    machine_is_archos_a101xs() || machine_is_omap_4430sdp()) {
 		*cmdline = command_line[0];
 	} else if (machine_is_omap4_panda()) {
 		*cmdline = command_line[2];
-	} else if (machine_is_archos_a80h() || machine_is_archos_a101h() ) {
+	} else if (machine_is_archos_a80h() || machine_is_archos_a101h() ||
+		machine_is_archos_a120())  {
 		*cmdline = command_line[3];
 	} else if (machine_is_archos_a101it()) {
         	*cmdline = command_line[4];
+	} else if (machine_is_archos_a70s2()) {
+		*cmdline = command_line[5];
+	} else if (machine_is_archos_a70h2()) {
+		*cmdline = command_line[6];
+	} else if (machine_is_archos_ludo()) {
+		*cmdline = command_line[7];
 	} else {
 		printk("%s : NO COMMAND LINE FOUND!", __func__);
 		return;
 	}
+
+	for (; t->hdr.size; t = tag_next(t))
+		if (t->hdr.tag == ATAG_MEM) {
+			unsigned int sz = t->u.mem.size;
+			unsigned long st = t->u.mem.start;
+
+			printk(KERN_INFO "%s: %dM@0x%lx from bootloader.\n",
+					__func__, sz/(1024*1024), st);
+
+			if (sz > 512 * 1024 * 1024) {
+				char mem[64];
+				snprintf(mem, sizeof(mem)," mem=%dM@0x%lx",
+						sz/(1024*1024) - 512, st + 512*1024*1024);
+
+				strlcat(*cmdline, mem, COMMAND_LINE_SIZE);
+			}
+			break;
+		}
+
+
+
 
 	printk("fixup_archos: [%s]\n", *cmdline);
 }

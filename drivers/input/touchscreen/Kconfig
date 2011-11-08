@@ -659,6 +659,17 @@ config TOUCHSCREEN_GOODIX_GT80x
 	  To compile this driver as a module, choose M here: the
 	  module will be called goodix-gt80x.
 
+config TOUCHSCREEN_TR16C0
+	tristate "TR16C0"
+	help
+	  Say Y here to enable support for I2C connected TR16C0
+	  touch panel.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called tr16c0-i2c.
+
 config TOUCHSCREEN_QUANTUM_OBP
 	tristate "Quantum OBP based touchscreens"
 	depends on I2C

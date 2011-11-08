@@ -211,6 +211,8 @@ static int __init omap_l2_cache_init(void)
 	u32 l2x0_auxctrl;
 	u32 l2x0_por;
 	u32 l2x0_lockdown;
+	u32 l2x0_dr_lat;
+	u32 l2x0_tr_lat;
 
 	/*
 	 * To avoid code running on other OMAPs in
@@ -241,10 +243,12 @@ static int __init omap_l2_cache_init(void)
 			l2x0_por = OMAP446X_PL310_POR;
 			l2x0_lockdown = 0;
 		}
+		l2x0_dr_lat = OMAP446X_PL310_D_RAM_LAT;
 	} else {
 		l2x0_auxctrl = OMAP443X_L2X0_AUXCTL_VALUE;
 		l2x0_por = OMAP443X_PL310_POR;
 		l2x0_lockdown = 0;
+		l2x0_dr_lat = OMAP443X_PL310_D_RAM_LAT;
 	}
 
 	/* Set POR through PPA service only in EMU/HS devices */
@@ -253,7 +257,8 @@ static int __init omap_l2_cache_init(void)
 				PPA_SERVICE_PL310_POR, 0x7, 1,
 				l2x0_por, 0, 0, 0);
 	} else if (omap_rev() > OMAP4430_REV_ES2_1)
-			omap_smc1(0x113, l2x0_por);
+			omap_smc1(0x113, l2x0_por, 0x00);
+
 
 	/*
 	 * FIXME : Temporary WA for the OMAP4460 stability
@@ -269,11 +274,20 @@ static int __init omap_l2_cache_init(void)
 	 * Doble Linefill, BRESP enabled, $I and $D prefetch ON,
 	 * Share-override = 1, NS lockdown enabled
 	 */
-	omap_smc1(0x109, l2x0_auxctrl);
+
+	/* Set PL310 Auxiliary Control Register */
+	omap_smc1(0x109, l2x0_auxctrl, 0x00);
+
+	/*  Set Tag and Data RAM Latency Control Registers
+	 *  Data RAM latency depended by CPU type
+	 *  Tag RAM latency keep by default
+	 */
+	l2x0_tr_lat = readl_relaxed(l2cache_base + 0x108);
+	omap_smc1(0x112, l2x0_tr_lat, l2x0_dr_lat);
 
 skip_auxctlr:
 	/* Enable PL310 L2 Cache controller */
-	omap_smc1(0x102, 0x1);
+	omap_smc1(0x102, 0x01, 0x00);
 
 	/*
 	 * 32KB way size, 16-way associativity,

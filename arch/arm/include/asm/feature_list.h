@@ -56,8 +56,14 @@ struct feature_tag_product_mac_address {
 };
 
 #define FTAG_PRODUCT_OEM		0x00000005
-struct feature_tag_oem{
-	char name[64];
+struct feature_tag_product_oem{
+	char name[16];
+	u32 id;
+};
+
+#define FTAG_PRODUCT_ZONE		0x00000006
+struct feature_tag_product_zone{
+	char name[16];
 	u32 id;
 };
 
@@ -106,6 +112,11 @@ struct feature_tag_serial_port {
 	u32 speed;
 };
 
+/* turbo bit */
+#define FTAG_TURBO 			0x00000014
+struct feature_tag_turbo {
+	u32 flag;
+};
 
 /*** features ****/
 #define FTAG_HAS_GPIO_VOLUME_KEYS	0x00010001
@@ -174,6 +185,13 @@ struct feature_tag_accelerometer {
 
 /* gps */
 #define FTAG_HAS_GPS			0x0001000a		
+#define GPS_FLAG_DISABLED		0x00000001
+struct feature_tag_gps {
+	u32 vendor;
+	u32 product;
+	u32 revision;
+	u32 flags;
+};
 
 /* camera */
 #define FTAG_HAS_CAMERA			0x0001000b		
@@ -284,6 +302,14 @@ struct feature_tag_speaker {
 	u32 flags;
 };
 
+#define FTAG_BATTERY			0x0001001b
+struct feature_tag_battery {
+	u32 type;
+};
+#define BATTERY_TYPE_HIGHRS	 0x00000000
+#define BATTERY_TYPE_LOWRS	 0x00000001
+
+
 #define feature_tag_next(t)	((struct feature_tag *)((u32 *)(t) + (t)->hdr.size))
 #define feature_tag_size(type)	((sizeof(struct feature_tag_header) + sizeof(struct type)) >> 2)
 
@@ -298,11 +324,14 @@ struct feature_tag {
 		struct feature_tag_generic 		generic; /* used for the most tags */
 		struct feature_tag_product_name		product_name;
 		struct feature_tag_product_serial	product_serial;
+		struct feature_tag_product_oem		product_oem;
+		struct feature_tag_product_zone		product_zone;
 		struct feature_tag_product_mac_address	mac_address;
 		struct feature_tag_board_revision	board_revision;
 		struct feature_tag_clock		clock;
 		struct feature_tag_sdram		sdram;
 		struct feature_tag_pmic			pmic;
+		struct feature_tag_turbo		turbo;
 		struct feature_tag_serial_port		serial_port;
 		struct feature_tag_gpio_volume_keys	gpio_volume_keys;
 		struct feature_tag_dcin			dcin;
@@ -313,11 +342,13 @@ struct feature_tag {
 		struct feature_tag_harddisk_controller	harddisk_controller;
 		struct feature_tag_harddisk		harddisk;
 		struct feature_tag_touchscreen		touchscreen;
+		struct feature_tag_gps			gps;
 		struct feature_tag_speaker		speaker;
 		struct feature_tag_mmcsd		mmcsd;
 		struct feature_tag_gpio_keys		gpio_keys;
 		struct feature_tag_screen		screen;
 		struct feature_tag_wifi_pa		wifi_pa;
+		struct feature_tag_battery		battery;
 	} u;
 };
 

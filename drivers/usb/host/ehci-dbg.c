@@ -1069,7 +1069,7 @@ static inline void create_debug_files (struct ehci_hcd *ehci)
 	if (!ehci->debug_registers)
 		goto registers_error;
 
-	ehci->debug_lpm = debugfs_create_file("lpm", S_IRUGO|S_IWUGO,
+	ehci->debug_lpm = debugfs_create_file("lpm", S_IRUGO|S_IWUG,
 						    ehci->debug_dir, bus,
 						    &debug_lpm_fops);
 	if (!ehci->debug_lpm)

@@ -2149,8 +2149,7 @@ static struct omap_hwmod_class_sysconfig omap3xxx_usbhsotg_sysc = {
 	.sysc_offs	= 0x0404,
 	.syss_offs	= 0x0408,
 	.sysc_flags	= (SYSC_HAS_SIDLEMODE | SYSC_HAS_MIDLEMODE|
-			  SYSC_HAS_ENAWAKEUP | SYSC_HAS_SOFTRESET |
-			  SYSC_HAS_AUTOIDLE | SYSS_HAS_RESET_STATUS),
+			  SYSC_HAS_ENAWAKEUP | SYSC_HAS_AUTOIDLE),
 	.idlemodes	= SIDLE_FORCE | SIDLE_NO | SIDLE_SMART,
 	.sysc_fields	= &omap_hwmod_sysc_type1,
 };
@@ -2679,10 +2678,11 @@ static struct omap_hwmod omap34xx_sr1_hwmod = {
 static u32 omap36xx_sr1_efuse_offs[] = {
 	OMAP3630_CONTROL_FUSE_OPP50_VDD1, OMAP3630_CONTROL_FUSE_OPP100_VDD1,
 	OMAP3630_CONTROL_FUSE_OPP120_VDD1, OMAP3630_CONTROL_FUSE_OPP1G_VDD1,
+	OMAP3630_CONTROL_FUSE_OPP1_2G_VDD1,
 };
 
 static u32 omap36xx_sr1_test_nvalues[] = {
-	0x898beb, 0x999b83, 0xaac5a8, 0xaab197,
+	0x898beb, 0x999b83, 0xaac5a8, 0xaab197, 0xaab197,
 };
 
 static struct omap_sr_dev_data omap36xx_sr1_dev_attr = {

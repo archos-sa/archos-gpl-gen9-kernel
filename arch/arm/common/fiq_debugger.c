@@ -37,6 +37,7 @@
 #include <asm/fiq_glue.h>
 #include <asm/stacktrace.h>
 
+#include <asm/proc-fns.h>
 #include <mach/system.h>
 
 #include <linux/uaccess.h>

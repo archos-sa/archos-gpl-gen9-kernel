@@ -142,6 +142,7 @@ struct pixcir_priv {
 	struct input_dev *input_dev;
 	struct completion irq_trigged;
 	struct regulator *regulator;
+	struct regulator *regulator_supply;
 
 	int is_m45;
 
@@ -183,6 +184,8 @@ static void pixcir_early_suspend(struct early_suspend *h);
 static void pixcir_late_resume(struct early_suspend *h);
 #endif
 
+static int pixcir_cycle_and_startup_sequence(struct i2c_client *client, int mode, int retry);
+
 static void pixcir_power(struct i2c_client *client, int on_off)
 {
 	struct pixcir_priv *priv = i2c_get_clientdata(client);
@@ -197,9 +200,12 @@ static void pixcir_power(struct i2c_client *client, int on_off)
 	state = on_off;
 
 	if (on_off) {
+		regulator_enable(priv->regulator_supply);
+		msleep(2);
 		regulator_enable(priv->regulator);
 	} else {
 		regulator_disable(priv->regulator);
+		regulator_disable(priv->regulator_supply);
 	}
 }
 
@@ -391,6 +397,8 @@ exit_work:
 	//enable_irq(priv->irq);
 }
 
+#define LOW_BAT_WA
+
 static void pixcir_m45_work_func(struct work_struct *work)
 {
 	struct finger {
@@ -413,7 +421,21 @@ static void pixcir_m45_work_func(struct work_struct *work)
 		dev_err(&priv->client->dev, "%s FAIL\n", __FUNCTION__);
 		goto exit_work;
 	}
+#ifdef LOW_BAT_WA
+	if (unlikely(!data[0])) {
+		dev_err(&priv->client->dev, "%s DEAAAAD !\n", __FUNCTION__);
 
+		priv->state = ST_IDLING;
+
+		if (pixcir_cycle_and_startup_sequence(priv->client, APP_MODE, 5) < 0)
+			dev_err(&priv->client->dev, "%s __DEAD__ ?!\n", __FUNCTION__);
+
+		if (priv->state == ST_IDLING)
+			priv->state = ST_RUNNING;
+
+		goto exit_work;
+	}
+#endif
 #ifdef DEBUG
 	print_hex_dump_bytes(KERN_ERR, 0, data, read_len);
 #endif
@@ -579,6 +601,28 @@ fail:
 	return -ENODEV;
 }
 
+static int pixcir_cycle_and_startup_sequence(struct i2c_client *client, int mode, int retry)
+{
+	int ret;
+
+	do {
+		msleep(100);
+		ret = pixcir_startup_sequence(client, mode);
+
+		if (ret >= 0) {
+			dev_dbg(&client->dev, "%s: tsp online.\n", __FUNCTION__);
+			return 0;
+		}
+
+		msleep(100);
+		pixcir_power(client, 0);
+	} while (retry--);
+
+	dev_err(&client->dev, "%s: failed, abort.\n", __FUNCTION__);
+
+	return -ENODEV;
+}
+
 static ssize_t _show_state(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
@@ -654,7 +698,6 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 {
 	struct pixcir_platform_data *pdata = client->dev.platform_data;
 	struct pixcir_priv *priv;
-	int retry;
 	int ret;
 
 	u8 tsp_version[4];
@@ -692,6 +735,13 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 
 	init_completion(&priv->irq_trigged);
 
+	priv->regulator_supply = regulator_get(&client->dev, "5V");
+	if (IS_ERR(priv->regulator_supply)) {
+		ret = -ENODEV;
+		dev_err(&client->dev, "failed to get regulator_supply\n");
+		goto err_regulator_get;
+	}
+
 	priv->regulator = regulator_get(&client->dev, "tsp_vcc");
 	if (IS_ERR(priv->regulator)) {
 		ret = -ENODEV;
@@ -699,22 +749,14 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 		goto err_regulator_get;
 	}
 
-	retry = 1;
-	do {
-		msleep(10);
-		ret = pixcir_startup_sequence(client, BOOT_MODE);
-	} while ((retry--) && (ret < 0));
+	ret = pixcir_cycle_and_startup_sequence(priv->client, BOOT_MODE, 1);
 
 	if (ret < 0) {
 		dev_err(&client->dev, "could not detect tsp in boot mode.\n");
 		priv->is_m45 = 1;
 	}
 
-	retry = 5;
-	do {
-		msleep(100);
-		ret = pixcir_startup_sequence(client, APP_MODE);
-	} while ((retry--) && (ret < 0));
+	ret = pixcir_cycle_and_startup_sequence(priv->client, APP_MODE, 5);
 
 	if (ret < 0) {
 		ret = -ENODEV;
@@ -821,6 +863,7 @@ err_irq_request_failed:
 
 err_detect_failed:
 	regulator_put(priv->regulator);
+	regulator_put(priv->regulator_supply);
 
 err_regulator_get:
 	destroy_workqueue(priv->wq);
@@ -853,6 +896,7 @@ static int pixcir_remove(struct i2c_client *client)
 	pixcir_power(client, 0);
 
 	regulator_put(priv->regulator);
+	regulator_put(priv->regulator_supply);
 
 	kfree(priv);
 	return 0;
@@ -876,18 +920,10 @@ static int pixcir_suspend(struct i2c_client *client, pm_message_t mesg)
 static int pixcir_resume(struct i2c_client *client)
 {
 	struct pixcir_priv *priv = i2c_get_clientdata(client);
-	int retry;
-	int ret;
 
 	enable_irq(priv->irq);
 
-	retry = 5;
-	do {
-		msleep(100);
-		ret = pixcir_startup_sequence(client, APP_MODE);
-	} while ((retry--) && (ret < 0));
-
-	if (!retry)
+	if (pixcir_cycle_and_startup_sequence(priv->client, APP_MODE, 5) < 0)
 		dev_err(&client->dev, "%s: failed ?\n", __FUNCTION__);
 
 	if (priv->state == ST_IDLING)

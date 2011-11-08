@@ -1824,7 +1824,10 @@ static ssize_t set_charge_level(struct device* dev,
 			twl6030_config_cinlimit_reg(di, di->charger_incurrentmA);
 			break;
 		case 2:
-			di->charger_incurrentmA = 500;
+			if (di->usb_is_dc)
+				di->charger_incurrentmA = 1500;
+			else
+				di->charger_incurrentmA = 500;
 			twl6030_config_cinlimit_reg(di, di->charger_incurrentmA);
 			break;
 		case 3:

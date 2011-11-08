@@ -45,19 +45,20 @@ static int __init panel_init(void)
 	archos_gpio_init_output(display_gpio.lcd_avdd_en, "lcd_avdd_en");
 
 	if (gpio_is_valid(display_gpio.lcd_pwon))
-		gpio_set_value(display_gpio.lcd_pwon, 1);
+		gpio_set_value(display_gpio.lcd_pwon, 0);
 
 	if (gpio_is_valid(display_gpio.lcd_rst))
-		gpio_set_value(display_gpio.lcd_rst, 0);
+		gpio_set_value(display_gpio.lcd_rst, 1);
 
 	if (gpio_is_valid(display_gpio.lcd_avdd_en))
-		gpio_set_value(display_gpio.lcd_avdd_en, 0);
+		gpio_set_value(display_gpio.lcd_avdd_en, 1);
 
 	if (gpio_is_valid(display_gpio.lvds_en))
-		gpio_set_value(display_gpio.lvds_en, 1);
+		gpio_set_value(display_gpio.lvds_en, 0);
 
 	// vcom
-	vcom_timer = omap_dm_timer_request_specific(display_gpio.vcom_pwm.timer);
+	if (display_gpio.vcom_pwm.timer != -1)
+		vcom_timer = omap_dm_timer_request_specific(display_gpio.vcom_pwm.timer);
 
 	if (vcom_timer != NULL) {
 		omap_dm_timer_set_source(vcom_timer, OMAP_TIMER_SRC_SYS_CLK);
@@ -119,7 +120,7 @@ static int panel_enable(struct omap_dss_device *disp)
 
 	panel_state = 1;
 
-	if (!IS_ERR(vcom_timer)) {
+	if (vcom_timer != NULL) {
 		omap_dm_timer_set_pwm( vcom_timer, 1, 1, OMAP_TIMER_TRIGGER_OVERFLOW_AND_COMPARE);
 
 		pwm_set_speed(vcom_timer, 30000, vcom_val);
@@ -147,9 +148,9 @@ static void panel_disable(struct omap_dss_device *disp)
 	if (gpio_is_valid(display_gpio.lcd_rst))
 		gpio_set_value(display_gpio.lcd_rst, 1);
 
-	if (!IS_ERR(vcom_timer)) {
+	if (vcom_timer != NULL) {
 		omap_dm_timer_stop(vcom_timer);
-		omap_dm_timer_free(vcom_timer);
+		omap_dm_timer_disable(vcom_timer);
 	}
 	panel_state = 0;
 }
@@ -210,7 +211,7 @@ int __init panel_claa_wsvga_7_init(struct omap_dss_device *disp_data)
 	}
 
 	display_gpio = *conf;
-	vcom_timer = ERR_PTR(-EINVAL);
+	vcom_timer = NULL;
 	
 	if (IS_ERR_VALUE(platform_device_register(&lcd_device)))
 		pr_info("%s: cannot register lcd_panel device\n", __func__);

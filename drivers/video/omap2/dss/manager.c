@@ -1310,7 +1310,7 @@ static void dss_apply_irq_handler(void *data, u32 mask)
 	unsigned long flags;
 
 	for (i = 0; i < num_mgrs; i++) {
-		while (dispc_go_busy(i));
+		while (dispc_go_busy(i) && dispc_is_channel_enabled(i));
 		mgr_busy[i] = dispc_go_busy(i);
 	}
 

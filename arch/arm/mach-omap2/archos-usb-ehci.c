@@ -13,6 +13,7 @@
 static struct clk *aux_clk;
 
 static int hub_pwron = UNUSED_GPIO;
+static int hub_rst = UNUSED_GPIO;
 static int husb1_pwron = UNUSED_GPIO;
 static bool suspended;
 
@@ -77,6 +78,9 @@ int archos_ehci_bus_disable(void)
 	if (hub_pwron > 0)
 		gpio_set_value(hub_pwron, 0);
 
+	if (hub_rst > 0)
+		gpio_set_value(hub_rst, 1);
+
 	return 0;
 }
 
@@ -104,6 +108,10 @@ int archos_ehci_bus_enable(void)
 		gpio_set_value(hub_pwron, 1);
 		msleep(100);
 	}
+
+	// XXX check ^^ timing
+	if (hub_rst > 0)
+		gpio_set_value(hub_rst, 0);
 
 	suspended = false;
 
@@ -137,6 +145,7 @@ static struct usbhs_omap_platform_data usbhs_pdata_omap3 __initconst = {
 	.platform_bus_resume = archos_ehci_bus_resume,
 	.platform_bus_disable = archos_ehci_bus_disable,
 	.platform_bus_enable = archos_ehci_bus_enable,
+	.es2_compatibility = true,
 };
 
 static void __init init_ehci_clock_init(void)
@@ -229,7 +238,7 @@ void __init archos_omap3_ehci_init(void)
 		return;
 	}
 
-	// hub
+	// hub power
 	if ((hub_pwron = cfg->enable_usb_hub) > 0) {
 		ret = gpio_request(hub_pwron, "HUB_PWRON");
 		if (ret) {
@@ -241,6 +250,21 @@ void __init archos_omap3_ehci_init(void)
 		gpio_export(hub_pwron, false);
 		gpio_direction_output(hub_pwron, 0);
 	}
+
+	// hub rst
+	if ((hub_rst = cfg->usb_hub_rst) > 0) {
+		ret = gpio_request(hub_rst, "HUB_RST");
+		if (ret) {
+			pr_err("Cannot request GPIO %d\n", hub_rst);
+			goto error;
+		}
+
+		omap_mux_init_gpio(hub_rst, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
+
+		gpio_export(hub_rst, false);
+		gpio_direction_output(hub_rst, 0);
+	}
+
 
 	// phy
 	if ((husb1_pwron = cfg->enable_usb_ehci) > 0) {
@@ -272,6 +296,9 @@ void __init archos_omap3_ehci_init(void)
 	if (hub_pwron > 0)
 		gpio_set_value(hub_pwron, 1);
 
+	if (hub_rst > 0)
+		gpio_set_value(hub_rst, 0);
+
  error:	
 	return;
 }
@@ -295,7 +322,7 @@ void __init archos_omap4_ehci_init(void)
 		return;
 	}
 
-	// hub
+	// hub pwr
 	if ((hub_pwron = cfg->enable_usb_hub) > 0) {
 		ret = gpio_request(hub_pwron, "HUB_PWRON");
 		if (ret) {
@@ -306,6 +333,19 @@ void __init archos_omap4_ehci_init(void)
 
 		gpio_export(hub_pwron, false);
 		gpio_direction_output(hub_pwron, 0);
+	}
+
+	// hub rst
+	if ((hub_rst = cfg->usb_hub_rst) > 0) {
+		ret = gpio_request(hub_rst, "HUB_RST");
+		if (ret) {
+			pr_err("Cannot request GPIO %d\n", hub_rst);
+			goto error;
+		}
+		omap_mux_init_gpio(hub_rst, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
+
+		gpio_export(hub_rst, false);
+		gpio_direction_output(hub_rst, 0);
 	}
 
 	// phy
@@ -326,7 +366,6 @@ void __init archos_omap4_ehci_init(void)
 
 	udelay(500);
 
-
 	if (husb1_pwron > 0)
 		gpio_set_value(husb1_pwron, 1);
 
@@ -334,6 +373,9 @@ void __init archos_omap4_ehci_init(void)
 
 	if (hub_pwron > 0)
 		gpio_set_value(hub_pwron, 1);
+
+	if (hub_rst > 0)
+		gpio_set_value(hub_rst, 0);
 
  error:	
 	return;

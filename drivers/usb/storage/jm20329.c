@@ -264,7 +264,6 @@ static inline int jm20329_wakeup(struct jm20329_device *dev)
 	dev->in_transition = JM20329_NONE;
 	dev->state = JM20329_AWAKE;
 	mutex_unlock(&dev->dev_mutex);
-
 	return 0;
 }
 
@@ -330,6 +329,8 @@ static void jm20329_suspend_resume_hook(struct us_data *us, int state)
 		}
 		mutex_unlock(&jm20329->dev_mutex);
 
+		usb_set_device_state(interface_to_usbdev(us->pusb_intf), USB_STATE_SUSPENDED);
+
 		printk("Sending hdd to sleep\n");
 		result = usb_stor_ata_sleep(us);
 		if (result) {
@@ -342,7 +343,6 @@ static void jm20329_suspend_resume_hook(struct us_data *us, int state)
 
 		complete(&us->cmnd_ready);
 
-		usb_set_device_state(interface_to_usbdev(us->pusb_intf), USB_STATE_SUSPENDED);
 	}
 }
 
@@ -353,6 +353,7 @@ static int jm20329_control_thread(void * __us)
 	struct jm20329_device *dev = us->extra;
 	long oldtime, time = jiffies_to_msecs(jiffies);
 	long tmp;
+	int was_in_suspend = 0;
 	printk("JM20329 control thread started\n");
 
 	mutex_lock(&dev->dev_mutex);
@@ -379,13 +380,20 @@ static int jm20329_control_thread(void * __us)
 					dev->in_transition = JM20329_REQUESTED;
 					mutex_unlock(&dev->dev_mutex);
 					jm20329_suspend_resume_hook(dev->us, US_SUSPEND);
-
+					was_in_suspend = 1;
+					kobject_uevent(&dev->pdev->dev.kobj, KOBJ_OFFLINE);
 				} else {
 					dev->timeout -= (time-oldtime);
 					mutex_unlock(&dev->dev_mutex);
 				}
 			}
 			continue;	// Go and wait some more
+		}
+
+		if (was_in_suspend) {
+			if (was_in_suspend == 2)
+				kobject_uevent(&dev->pdev->dev.kobj,KOBJ_CHANGE);
+			was_in_suspend++;
 		}
 
 		mutex_lock(&dev->dev_mutex);
@@ -496,6 +504,11 @@ SkipForAbort:
 
 		/* unlock the device pointers */
 		mutex_unlock(&us->dev_mutex);
+
+		if (was_in_suspend) {
+			kobject_uevent(&dev->pdev->dev.kobj,KOBJ_ONLINE);
+			was_in_suspend = 0;
+		}
 
 		
 	} /* for (;;) */

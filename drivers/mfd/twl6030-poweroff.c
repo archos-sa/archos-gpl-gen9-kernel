@@ -78,17 +78,11 @@ void twl6030_poweroffon(void)
 }
 
 EXPORT_SYMBOL(twl6030_poweroffon);
-
-static void twl6030_machine_restart(char mode, const char *cmd)
-{
-	twl6030_poweroffon();	
-}
-
+ 
 static int __init twl6030_poweroff_init(void)
 {
 	pm_power_off = twl6030_poweroff;
-	arm_pm_restart = twl6030_machine_restart;
-	
+
 	return 0;
 }
 

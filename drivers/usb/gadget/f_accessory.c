@@ -15,8 +15,8 @@
  *
  */
 
-#define DEBUG 
-#define VERBOSE_DEBUG 
+/* #define DEBUG */
+/* #define VERBOSE_DEBUG */
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -635,12 +635,12 @@ static int acc_function_setup(struct usb_function *f,
 	u16	w_value = le16_to_cpu(ctrl->wValue);
 	u16	w_length = le16_to_cpu(ctrl->wLength);
 
-
+/*
 	printk(KERN_INFO "acc_function_setup "
 			"%02x.%02x v%04x i%04x l%u\n",
 			b_requestType, b_request,
 			w_value, w_index, w_length);
-
+*/
 
 	if (dev->function.disabled) {
 		if (b_requestType == (USB_DIR_OUT | USB_TYPE_VENDOR)) {
@@ -799,10 +799,10 @@ static struct android_usb_function acc_function = {
 	.bind_config = acc_bind_config,
 };
 
-static int __init init(void)
+int __init f_accessory_init(void)
 {
 	printk(KERN_INFO "f_accessory init\n");
 	android_register_function(&acc_function);
 	return 0;
 }
-module_init(init);
+//module_init(init);

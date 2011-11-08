@@ -30,6 +30,8 @@
 
 #define	PORT_WAKE_BITS	(PORT_WKOC_E|PORT_WKDISC_E|PORT_WKCONN_E)
 
+#define NO_PORT1_COMPANION_HANDOFF
+
 #ifdef	CONFIG_PM
 
 static int ehci_hub_control(
@@ -562,8 +564,11 @@ static int check_reset_complete (
 		return port_status;
 
 	/* if reset finished and it's still not enabled -- handoff */
-	if (!(port_status & PORT_PE)) {
-
+#ifdef NO_PORT1_COMPANION_HANDOFF
+	if (!(port_status & PORT_PE) && (index != 0)) {
+#else
+		if (!(port_status & PORT_PE)) {
+#endif
 		/* with integrated TT, there's nobody to hand it to! */
 		if (ehci_is_TDI(ehci)) {
 			ehci_dbg (ehci,

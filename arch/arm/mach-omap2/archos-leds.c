@@ -39,6 +39,12 @@ static struct gpio_led gpio_leds[] = {
 		.default_trigger	= "backlight",
 		.gpio			= -1,
 		.active_low		= 1,
+	},
+	{
+		.name			= "status",
+		.default_trigger	= "default-on",
+		.gpio			= -1,
+		.active_low		= 0,
 	}
 };
 
@@ -117,6 +123,7 @@ static int __init archos_leds_init(void)
 	const struct archos_leds_config *leds_cfg;
 	const struct archos_leds_conf *cfg;
 	int power_led;
+	int status_led;
 	int ret;
 	
 	pr_debug("archos_leds_init\n");
@@ -137,12 +144,23 @@ static int __init archos_leds_init(void)
 	if (gpio_is_valid(power_led)) {
 		gpio_leds[0].gpio = power_led;
 		gpio_leds[0].active_low = cfg->pwr_invert;
+	} else
+		pr_debug("%s: no power led configured\n", __func__);
 
+	status_led = cfg->status_led;
+	pr_debug("%s: status led on gpio %i\n", __func__, status_led);
+	
+	if (gpio_is_valid(status_led)) {
+		gpio_leds[2].gpio = status_led;
+		gpio_leds[2].active_low = cfg->pwr_invert;
+	} else
+		pr_debug("%s: no status led configured\n", __func__);
+
+	if (gpio_is_valid(power_led) || gpio_is_valid(status_led)) {
 		ret = platform_device_register(&board_led_device);
 		if (IS_ERR_VALUE(ret))
 			pr_err("unable to register power LED\n");
-	} else
-		pr_debug("%s: no power led configured\n", __func__);
+	}
 
 	/* Backlight Led */
 	backlight_led_pwm = cfg->backlight_led;
@@ -185,7 +203,7 @@ static int __init archos_leds_init(void)
 		bkl_reg = regulator_get( &board_backlight_device.dev, 
 				cfg->bkl_regulator_name);
 		if (IS_ERR(bkl_reg)) {
-			pr_err("Unable to get LED regulator\n");
+			dev_err(&board_backlight_device.dev, "Unable to get LED regulator\n");
 			bkl_reg = NULL;
 		}
 	}

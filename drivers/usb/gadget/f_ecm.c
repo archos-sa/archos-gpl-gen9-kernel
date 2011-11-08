@@ -120,9 +120,9 @@ static struct usb_interface_descriptor ecm_control_intf = {
 	/* .bInterfaceNumber = DYNAMIC */
 	/* status endpoint is optional; this could be patched later */
 	.bNumEndpoints =	1,
-	.bInterfaceClass =	USB_CLASS_COMM,
-	.bInterfaceSubClass =	USB_CDC_SUBCLASS_ETHERNET,
-	.bInterfaceProtocol =	USB_CDC_PROTO_NONE,
+	.bInterfaceClass =	USB_CLASS_WIRELESS_CONTROLLER,
+	.bInterfaceSubClass =	1,
+	.bInterfaceProtocol =	3,
 	/* .iInterface = DYNAMIC */
 };
 

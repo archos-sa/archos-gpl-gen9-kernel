@@ -187,12 +187,12 @@ config MACH_ARCHOS
 	default n
 
 config CMDLINE_DEFAULT
-	string "Kernel command line for Archos A80S"
+	string "Kernel command line for Archos G9 NAND based devices"
 	depends on MACH_ARCHOS
 	default ""
 
 config CMDLINE_HDD
-	string "Kernel command line for Archos A80H"
+	string "Kernel command line for Archos G9 HDD based devices"
 	depends on ARCH_OMAP4 && MACH_ARCHOS
 	default ""
 
@@ -292,74 +292,13 @@ config MACH_OMAP_4430SDP
 	bool "OMAP 4430 SDP board"
 	depends on ARCH_OMAP4
 	select HIGHMEM
-	select TWL6030_PWM
-	select TWL6030_GPADC
 	select TWL6040_VIB if ANDROID_TIMED_OUTPUT && TWL6040_CODEC
-	select NEW_LEDS
-	select LEDS_CLASS
-	select LEDS_PWM
-	select LEDS_GPIO
-	select LEDS_GPIO_PLATFORM
-	select LEDS_OMAP4430_SDP_DISPLAY
-	select LEDS_OMAP4430_SDP_KEYPAD
-	select LEDS_TRIGGERS
-	select LEDS_TRIGGER_TIMER
-	select INPUT_CMA3000_I2C
-	select INPUT_BH1780
-	select MISC_DEVICES
-	select INPUT_BMP085
-	select STAGING
-	select IIO
-	select INPUT_HMC5843
-	select INPUT_SFH7741
-	select HWMON
-	select INPUT_MISC
-	select INPUT_KEYBOARD
-	select INPUT_TOUCHSCREEN
-	select TOUCHSCREEN_SYNTM12XX
-	select POWER_SUPPLY
-	select TWL6030_BCI_BATTERY
-	select CHARGER_BQ2415x
-#	select SECURITY_MIDDLEWARE_COMPONENT
-	select CDC_TCXO
 
 config MACH_OMAP_BLAZE
 	bool "OMAP 44xx Tablet board"
 	depends on ARCH_OMAP4
 	select HIGHMEM
-	select TWL6030_PWM
-	select TWL6030_GPADC
 	select TWL6040_VIB if ANDROID_TIMED_OUTPUT && TWL6040_CODEC
-	select NEW_LEDS
-	select LEDS_CLASS
-	select LEDS_PWM
-	select LEDS_GPIO
-	select LEDS_GPIO_PLATFORM
-	select LEDS_OMAP4430_SDP_DISPLAY
-	select LEDS_OMAP4430_SDP_KEYPAD
-	select LEDS_TRIGGERS
-	select LEDS_TRIGGER_TIMER
-	select MISC_DEVICES
-	select INPUT_BMP085
-	select INPUT_BMA180
-	select INPUT_MPU3050
-	select INPUT_TSL2771
-	select INPUT_TWL6030_PWRBUTTON
-	select STAGING
-	select IIO
-	select INPUT_HMC5843
-	select HWMON
-	select INPUT_MISC
-	select INPUT_KEYBOARD
-	select INPUT_TOUCHSCREEN
-	select TOUCHSCREEN_QUANTUM_OBP
-	select POWER_SUPPLY
-	select TWL6030_BCI_BATTERY
-	select CHARGER_BQ2415x
-	select SECURITY_MIDDLEWARE_COMPONENT
-	select CDC_TCXO
-	select PANEL_DP501
-	select PANEL_D2L
 
 config MACH_ARCHOS_A80S
 	bool "Archos A80S board"
@@ -388,9 +327,7 @@ config MACH_ARCHOS_A101H
 config MACH_OMAP4_PANDA
 	bool "OMAP4 based Panda board"
 	depends on ARCH_OMAP4
-	select OMAP_PACKAGE_CBL
-	select OMAP_PACKAGE_CBS
-	
+
 config ERRATA_OMAP4_AXI2OCP
 	bool "OMAP 4430 axi2ocp errata workaround"
 	depends on ARCH_OMAP4
@@ -467,12 +404,14 @@ config OMAP4_KEEP_STATIC_DEPENDENCIES
 	help
 	  Select this option to keep the static dependency mapping for OMAP4.
 
-config OMAP4_DPLL_CASCADING_BLOCKER
-	bool "dpll cascading blocker"
+config OMAP4_DPLL_CASCADING
+	bool "DPLL cascading"
 	depends on ARCH_OMAP4
-	default y
+	default n
 	help
-	  Select this option to make it possible to block dynamic cascading on OMAP4 devices.
+	  Select this option to allow OMAP4 driving the whole clock tree from
+	  a single DPLL output clock. This is power conserving but might break
+	  some drivers. 
 
 config OMAP4_TPS62361
 	bool "OMAP4460 MPU power supply PMIC"
@@ -485,8 +424,31 @@ config OMAP4_TPS62361
 config ARCHOS_FORCE_CONSOLE_UART3
 	bool "Force kernel's console to UART3"
 	depends on MACH_ARCHOS
+	depends on ARCH_OMAP4
 	default n
 	help
 	  Force /dev/console to be redirected to UART3,
 	  even when bootloader says it's UART1.
 	  It's needed for GPS prodtest.
+
+config ARCHOS_FORCE_UART3_ON_DPDM
+	bool "Configure DPDM balls to UART3 mux mode"
+	depends on MACH_ARCHOS
+	depends on ARCH_OMAP4
+	default n
+
+config ARCHOS_FORCE_OMAP4_HP
+	bool "Force high-performance features on devices without heat spreader"
+	depends on MACH_ARCHOS && ARCH_OMAP4
+	default n
+	help
+	  Mass production devices have additional cooling to allow running at
+	  1.5 GHz, this setting allows 1.5GHz on early prototypes.
+
+config ARCHOS_OMAP4_DUTY_CYCLE
+	tristate "Control OPP_NITRO usage based on on-die temperature sensor"
+	depends on OMAP_TEMP_SENSOR && SENSORS_OMAP_BANDGAP_TEMP_SENSOR
+	default y
+	---help---
+ 	 OPP_NITRO (1.2GHz) CPUs cannot work long at maximum frequency.
+ 	 Limit the duty cycle of 1.2GHz based on on-die sensor temperatur.

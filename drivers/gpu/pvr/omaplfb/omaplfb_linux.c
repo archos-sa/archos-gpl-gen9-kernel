@@ -63,12 +63,14 @@ struct composition {
 #define DISPLAY_CHANNEL OMAP_DSS_CHANNEL_LCD
 #endif
 
-#define COMPOSITION_MGRS 3
-static struct list_head gcompositions[COMPOSITION_MGRS];
+#define MAXIMUM_DISPLAY 3
+static struct list_head gcompositions[MAXIMUM_DISPLAY];
 static int gcomposition_enabled;
-struct mutex gcomposition_lock;
+static struct mutex gcomposition_lock;
 
 MODULE_SUPPORTED_DEVICE(DEVNAME);
+
+static void omaplfb_dsscomp_disable_mgr(int display_ix);
 
 /*
  * Here we get the function pointer to get jump table from
@@ -107,30 +109,6 @@ static dsscomp_t find_dsscomp_obj(struct omap_overlay_manager *manager)
 		return NULL;
 	comp = dsscomp_find(manager, sync_id);
 	return comp;
-}
-
-void omaplfb_drop_frame(OMAPLFB_DEVINFO *display_info)
-{
-	struct fb_info *framebuffer = display_info->psLINFBInfo;
-	struct omapfb_info *ofbi = FB2OFB(framebuffer);
-	struct omapfb2_device *fbdev = ofbi->fbdev;
-	dsscomp_t comp = NULL;
-
-	/* Nothing to do if we are not using DSSComp */
-	if (!guse_dsscomp)
-		return;
-
-	omapfb_lock(fbdev);
-
-	if (ofbi->num_overlays > 0) {
-		struct omap_overlay *overlay = ofbi->overlays[0];
-		struct omap_overlay_manager *manager = overlay->manager;
-		comp = find_dsscomp_obj(manager);
-		if (comp)
-			dsscomp_drop(comp);
-	}
-
-	omapfb_unlock(fbdev);
 }
 
 static void omaplfb_dma_cb(int channel, u16 status, void *data)
@@ -244,8 +222,11 @@ static void omaplfb_clone_handler(struct work_struct *work)
 
 	/* Apply the composition */
 	err = dsscomp_get_first_ovl(comp, &dss2_ovl);
-	if (err)
+	if (err) {
 		ERROR_PRINTK("Overlay not found in comp %p", comp);
+		dsscomp_drop(comp);
+		goto exit;
+	}
 	else {
 		dss2_ovl.ba = dst_paddr;
 		dsscomp_set_ovl(comp, &dss2_ovl);
@@ -253,6 +234,9 @@ static void omaplfb_clone_handler(struct work_struct *work)
 
 	if (dsscomp_apply(comp))
 		ERROR_PRINTK("DSSComp apply failed %p", comp);
+
+exit:
+	kfree(clone_work);
 }
 
 /*
@@ -268,16 +252,9 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 	int queued_clone_work = 0;
 	int mgr_id_dst;
 	int r = 0;
-
 	struct omap_overlay_manager *manager;
 	struct dsscomp_setup_mgr_data *prime_data, *sec_data;
 
-	/* We can reach this condition on resume, where the omaplfb
-	 * flushes the manager queue ignoring compositions, this
-	 * should not be a problem
-	 */
-	if (omaplfb_dsscomp_isempty())
-		return;
 	manager = omap_dss_get_overlay_manager(DISPLAY_CHANNEL);
 	omaplfb_dsscomp_get(&prime_data, DISPLAY_CHANNEL);
 	if (!prime_data) {
@@ -286,7 +263,7 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 	}
 	prime_data->mode &= ~DSSCOMP_SETUP_APPLY;
 	comp = dsscomp_createcomp(manager, prime_data, false);
-	omaplfb_dsscomp_free(prime_data);
+	omaplfb_dsscomp_free(prime_data, comp);
 	if (!comp) {
 		ERROR_PRINTK("failed to get comp");
 		return;
@@ -306,11 +283,13 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 
 	sec_data->mode &= ~DSSCOMP_SETUP_APPLY;
 	clone_comp = dsscomp_createcomp(manager, sec_data, false);
-	omaplfb_dsscomp_free(sec_data);
+	omaplfb_dsscomp_free(sec_data, clone_comp);
 	if (!clone_comp)
 		goto clone_unlock;
 
-	work = &clone_data->work;
+	work = kmalloc(sizeof(struct omaplfb_clone_work), GFP_KERNEL);
+	if (!work)
+		goto clone_unlock;
 	INIT_WORK((struct work_struct *)work, omaplfb_clone_handler);
 	work->display_info = display_info;
 	work->src_buf_addr = phy_addr;
@@ -322,21 +301,23 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 		ERROR_PRINTK("Failed to queue cloning work, "
 			"droppping comp %p error %d", clone_comp, r);
 		dsscomp_drop(clone_comp);
+		kfree(work);
 	}
 
 clone_unlock:
 	mutex_unlock(&display_info->clone_lock);
 	r = dsscomp_get_first_ovl(comp, &dss2_ovl);
-	if (r)
-		ERROR_PRINTK("Overlay not found in comp %p", comp);
-	else {
+	if (r) {
+		ERROR_PRINTK("Overlay not found in comp %p (%d)", comp, r);
+		dsscomp_drop(clone_comp);
+		return;
+	} else {
 		dss2_ovl.ba = phy_addr;
 		dsscomp_set_ovl(comp, &dss2_ovl);
 	}
 
 	if (dsscomp_apply(comp))
 		ERROR_PRINTK("DSSComp apply failed %p", comp);
-
 	/* We need to wait here until the transfer to the buffer used for
 	 * cloning ends
 	 */
@@ -403,7 +384,8 @@ static void OMAPLFBFlipDSS(OMAPLFB_SWAPCHAIN *psSwapChain,
 		if (manager) {
 			display = manager->device;
 			/* No display attached to this overlay, don't update */
-			if (!display)
+			if (!display ||
+				display->state == OMAP_DSS_DISPLAY_SUSPENDED)
 				continue;
 			driver = display->driver;
 			manager->apply(manager);
@@ -432,8 +414,7 @@ void OMAPLFBFlip(OMAPLFB_SWAPCHAIN *psSwapChain, unsigned long aPhyAddr)
 	struct omapfb_info *ofbi = FB2OFB(framebuffer);
 	struct omapfb2_device *fbdev = ofbi->fbdev;
 
-
-	if (guse_dsscomp) {
+	if (guse_dsscomp && !omaplfb_dsscomp_isempty()) {
 		OMAPLFBFlipDSSComp(psDevInfo, aPhyAddr, ofbi);
 		return;
 	}
@@ -493,7 +474,7 @@ void OMAPLFBPresentSync(OMAPLFB_DEVINFO *psDevInfo,
 	struct omapfb2_device *fbdev = ofbi->fbdev;
 	unsigned long aPhyAddr = (unsigned long)psFlipItem->sSysAddr->uiAddr;
 
-	if (guse_dsscomp) {
+	if (guse_dsscomp && !omaplfb_dsscomp_isempty()) {
 		OMAPLFBFlipDSSComp(psDevInfo, aPhyAddr, ofbi);
 		return;
 	}
@@ -630,7 +611,7 @@ static int omaplfb_disable_cloning_disp(OMAPLFB_DEVINFO *display_info)
 		goto exit_unlock;
 	}
 
-	err = omaplfb_free_buf_cloning(display_info);
+	omaplfb_dsscomp_disable_mgr(clone_data->mgr_id_dst);
 
 	/* Wait for any pending DMA transfers and apply calls to the
 	 * destination manager
@@ -647,6 +628,8 @@ static int omaplfb_disable_cloning_disp(OMAPLFB_DEVINFO *display_info)
 		else
 			break;
 	} while (true);
+
+	err = omaplfb_free_buf_cloning(display_info);
 
 	display_info->cloning_enabled = 0;
 	kfree(display_info->clone_data);
@@ -694,7 +677,7 @@ void omaplfb_dsscomp_init(void)
 {
 	int i;
 	mutex_init(&gcomposition_lock);
-	for (i = 0; i < COMPOSITION_MGRS; i++)
+	for (i = 0; i < MAXIMUM_DISPLAY; i++)
 		INIT_LIST_HEAD(&gcompositions[i]);
 	gcomposition_enabled = 1;
 }
@@ -706,6 +689,7 @@ int omaplfb_dsscomp_setup(struct omaplfb_dsscomp_info *infop)
 	struct dss2_mgr_info *mgr;
 	int r = -EINVAL;
 	int throwaway = 0;
+	int apply_now = 0;
 
 	/*
 	 * This check is a kludge but we really don't want to
@@ -727,20 +711,33 @@ int omaplfb_dsscomp_setup(struct omaplfb_dsscomp_info *infop)
 		goto cleanup;
 	comp->data = (struct dsscomp_setup_mgr_data *)compbuf;
 	mgr = &comp->data->mgr;
-	if (mgr->ix >= COMPOSITION_MGRS) {
+	if (mgr->display_index >= MAXIMUM_DISPLAY) {
 		r = -EINVAL;
 		goto cleanup;
 	}
+
+	/* Check if we need to apply the composition immediately */
+	if (comp->data->mode & DSSCOMP_SETUP_APPLY)
+		apply_now = 1;
+
 	mutex_lock(&gcomposition_lock);
-	if (!gcomposition_enabled)
+	if (!gcomposition_enabled || apply_now)
 		throwaway = 1;	/* Throw away compositions */
 	else {
 		dsscomp_prepdata(comp->data);
-		list_add_tail(&comp->queue, &gcompositions[mgr->ix]);
+		list_add_tail(&comp->queue, &gcompositions[mgr->display_index]);
 	}
 	mutex_unlock(&gcomposition_lock);
 	if (!throwaway)
 		goto end;
+
+	if (apply_now) {
+		struct omap_overlay_manager *manager;
+		manager = omap_dss_get_overlay_manager(mgr->display_index);
+		/* Error handling is managed by dsscomp */
+		dsscomp_prepdata(comp->data);
+		dsscomp_createcomp(manager, comp->data, false);
+	}
 cleanup:
 	kfree(compbuf);
 	kfree(comp);
@@ -751,18 +748,18 @@ end:
 /*
  * Caller is responsible for free the returned entry
  */
-void omaplfb_dsscomp_get(struct dsscomp_setup_mgr_data **datap, int mgr_ix)
+void omaplfb_dsscomp_get(struct dsscomp_setup_mgr_data **datap, int display_ix)
 {
 	struct list_head *list;
 	struct composition *c;
 	*datap = NULL;
 
 	mutex_lock(&gcomposition_lock);
-	if (list_empty(&gcompositions[mgr_ix])) {
+	if (list_empty(&gcompositions[display_ix])) {
 		mutex_unlock(&gcomposition_lock);
 		return;
 	}
-	list = gcompositions[mgr_ix].next;
+	list = gcompositions[display_ix].next;
 	list_del(list);
 	mutex_unlock(&gcomposition_lock);
 
@@ -771,8 +768,16 @@ void omaplfb_dsscomp_get(struct dsscomp_setup_mgr_data **datap, int mgr_ix)
 	kfree(c);
 }
 
-void omaplfb_dsscomp_free(struct dsscomp_setup_mgr_data *datap)
+void omaplfb_dsscomp_free(struct dsscomp_setup_mgr_data *datap, dsscomp_t comp)
 {
+	/*
+	 * We generally call this function after trying to create a
+	 * composition, if the composition creation fails, do a prepdata_drop
+	 * in order to release video buffers. If there is a composition some
+	 * one will be expected to apply or drop the composition later.
+	 */
+	if (!comp)
+		dsscomp_prepdata_drop(datap);
 	kfree(datap);
 }
 
@@ -783,31 +788,43 @@ void omaplfb_dsscomp_enable(void)
 	mutex_unlock(&gcomposition_lock);
 }
 
+static void omaplfb_dsscomp_disable_lk(int display_ix)
+{
+	while (!list_empty(&gcompositions[display_ix])) {
+		struct list_head *list;
+		struct composition *c;
+		list = gcompositions[display_ix].next;
+		list_del(list);
+		c = list_entry(list, struct composition, queue);
+		dsscomp_prepdata_drop(c->data);
+		kfree(c->data);
+		kfree(c);
+	}
+}
+
+static void omaplfb_dsscomp_disable_mgr(int display_ix)
+{
+	mutex_lock(&gcomposition_lock);
+	omaplfb_dsscomp_disable_lk(display_ix);
+	mutex_unlock(&gcomposition_lock);
+}
+
 void omaplfb_dsscomp_disable(void)
 {
-	int mgr_ix;
+	int display_ix;
 	mutex_lock(&gcomposition_lock);
 	gcomposition_enabled = 0;
-	for (mgr_ix = 0; mgr_ix < COMPOSITION_MGRS; mgr_ix++)
-		while (!list_empty(&gcompositions[mgr_ix])) {
-			struct list_head *list;
-			struct composition *c;
-			list = gcompositions[mgr_ix].next;
-			list_del(list);
-			c = list_entry(list, struct composition, queue);
-			dsscomp_prepdata_drop(c->data);
-			kfree(c->data);
-			kfree(c);
-		}
+	for (display_ix = 0; display_ix < MAXIMUM_DISPLAY; display_ix++)
+		omaplfb_dsscomp_disable_lk(display_ix);
 	mutex_unlock(&gcomposition_lock);
 }
 
 bool omaplfb_dsscomp_isempty(void)
 {
-	int mgr_ix;
+	int display_ix;
 	mutex_lock(&gcomposition_lock);
-	for (mgr_ix = 0; mgr_ix < COMPOSITION_MGRS; mgr_ix++)
-		if (!list_empty(&gcompositions[mgr_ix])) {
+	for (display_ix = 0; display_ix < MAXIMUM_DISPLAY; display_ix++)
+		if (!list_empty(&gcompositions[display_ix])) {
 			mutex_unlock(&gcomposition_lock);
 			return false;
 		}

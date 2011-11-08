@@ -47,6 +47,12 @@
 #include <mach/board-archos.h>
 #endif
 
+#ifdef CONFIG_ARCHOS_FORCE_UART3_ON_DPDM
+#define uart3_on_usb true
+#else
+#define uart3_on_usb false
+#endif
+
 /*
  * The TWL4030 "Triton 2" is one of a family of a multi-function "Power
  * Management and System Companion Device" chips originally designed for
@@ -709,7 +715,7 @@ add_children(struct twl4030_platform_data *pdata, const struct i2c_device_id *id
 			.supply =	"usb3v1",
 		};
 
-	/* First add the regulators so that they can be used by transceiver */
+		/* First add the regulators so that they can be used by transceiver */
 		if (twl_has_regulator()) {
 			/* this is a template that gets copied */
 			struct regulator_init_data usb_fixed = {
@@ -738,7 +744,7 @@ add_children(struct twl4030_platform_data *pdata, const struct i2c_device_id *id
 
 		}
 
-		if (pdata->usb && pdata->usb->name)
+		if (pdata->usb->name)
 			usb_drv_name = pdata->usb->name;
 		else
 			usb_drv_name = "twl4030_usb";
@@ -786,12 +792,13 @@ add_children(struct twl4030_platform_data *pdata, const struct i2c_device_id *id
 			};
 
 			child = add_regulator_linked(TWL6030_REG_VUSB,
-						      &usb_fixed, &usb3v3, 1);
+						      pdata->vusb ? pdata->vusb : &usb_fixed,
+						      &usb3v3, 1);
 			if (IS_ERR(child))
 				return PTR_ERR(child);
 		}
 			
-		if (pdata->usb && pdata->usb->name)
+		if (pdata->usb->name)
 			usb_drv_name = pdata->usb->name;
 		else
 			usb_drv_name = "twl6030_usb";
@@ -921,10 +928,6 @@ add_children(struct twl4030_platform_data *pdata, const struct i2c_device_id *id
 		child = add_regulator(TWL4030_REG_VAUX4, pdata->vaux4);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
-
-		child = add_regulator(TWL6030_REG_CLK32KG, pdata->clk32kg);
-		if (IS_ERR(child))
-			return PTR_ERR(child);
 	}
 
 	/* twl6030 regulators */
@@ -962,6 +965,10 @@ add_children(struct twl4030_platform_data *pdata, const struct i2c_device_id *id
 			return PTR_ERR(child);
 
 		child = add_regulator(TWL6030_REG_VAUX3_6030, pdata->vaux3);
+		if (IS_ERR(child))
+			return PTR_ERR(child);
+
+		child = add_regulator(TWL6030_REG_CLK32KG, pdata->clk32kg);
 		if (IS_ERR(child))
 			return PTR_ERR(child);
 	}
@@ -1085,7 +1092,7 @@ static int __devexit twl_remove(struct i2c_client *client)
 	return 0;
 }
 
-static void _init_twl6030_settings(void)
+static void _init_twl6030_settings(bool keep_usb3v3)
 {
 	/* unmask PREQ transition */
 	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0xC0, 0x20);
@@ -1102,8 +1109,8 @@ static void _init_twl6030_settings(void)
 	/* MISC1 */
 	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00, 0xE4);
 	/* MISC2 */
-	twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00, 0xE5);
-
+	if (!keep_usb3v3)
+		twl_i2c_write_u8(TWL6030_MODULE_ID0, 0x00, 0xE5);
 	/*
 	 * BBSPOR_CFG - Disable BB charging. It should be
 	 * taken care by proper driver
@@ -1153,7 +1160,7 @@ twl_suspend(struct i2c_client *client, pm_message_t message)
 {
 	/* Make sure below init twl settings are not left on */
 	if (twl_class_is_6030())
-		_init_twl6030_settings();
+		_init_twl6030_settings(uart3_on_usb ? true : false);
 
 	return 0;
 }
@@ -1273,7 +1280,7 @@ twl_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (twl_class_is_6030()) {
 		twl_i2c_write_u8(TWL_MODULE_PM_RECEIVER, 0xE1, CLK32KG_CFG_STATE);
 		/* Remove unwanted settings on twl chip as part of twl init. */
-		_init_twl6030_settings();
+		_init_twl6030_settings(false);
 	}
 
 	status = add_children(pdata, id);

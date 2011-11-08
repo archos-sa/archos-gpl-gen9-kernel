@@ -442,6 +442,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.pwr_invert = 1,
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[1] = {
 		.power_led = 57,
@@ -451,6 +452,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.pwr_invert = 1,
 		.bkl_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[2] = {
 		.power_led = 57,
@@ -460,6 +462,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.bkl_invert = 1,
 		.pwr_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[3] = {
 		.power_led = 57,
@@ -469,6 +472,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.bkl_invert = 1,
 		.pwr_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[4] = {
 		.power_led = 57,
@@ -478,6 +482,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.bkl_invert = 1,
 		.pwr_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[5] = {
 		.power_led = 57,
@@ -487,6 +492,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.bkl_invert = 1,
 		.pwr_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 	.rev[6] = {
 		.power_led = 57,
@@ -496,6 +502,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.bkl_max = 254,
 		.bkl_invert = 1,
 		.pwr_invert = 1,
+		.status_led = UNUSED_GPIO,
 	},
 };
 

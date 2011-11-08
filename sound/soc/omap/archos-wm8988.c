@@ -115,7 +115,7 @@ static int _resume_io(void)
 
 /* Headphone plug detection stuff ------------------------------------------ */
 
-#define HEAPHONE_SW_NAME	"headphone_switch"
+#define HEAPHONE_SW_NAME	"h2w"
 
 struct work_struct headphone_work;
 
@@ -131,13 +131,13 @@ static ssize_t print_headphone_state(struct switch_dev *sdev, char *buf)
 	switch(sdev->state)
 	{
 		case 0:
-			buflen = sprintf(buf, "Not plugged\n");
+			buflen = sprintf(buf, "0\n");
 			break;
 		case 1:
-			buflen = sprintf(buf, "Plugged\n");
+			buflen = sprintf(buf, "1\n");
 			break;
 		default:
-			buflen = sprintf(buf, "Unknown\n");
+			buflen = sprintf(buf, "0\n");
 			break;
 	}
 	return buflen;
@@ -675,6 +675,33 @@ int archos_wl1271_resume_post(struct platform_device *pdev)
 
 #endif
 
+#define WL1271_RATES \
+	(SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 | SNDRV_PCM_RATE_16000 | \
+	SNDRV_PCM_RATE_22050 | SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | \
+	SNDRV_PCM_RATE_48000)
+
+#define WL1271_FORMATS \
+	(SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_S16_LE)
+
+static struct snd_soc_dai_driver archos_dai_driver[] = {
+{
+	.name = "wl1271-hifi",
+	.playback = {
+		.stream_name = "Playback",
+		.channels_min = 1,
+		.channels_max = 2,
+		.rates = WL1271_RATES,
+		.formats = WL1271_FORMATS,
+	},
+	.capture = {
+		.stream_name = "Capture",
+		.channels_min = 1,
+		.channels_max = 2,
+		.rates = WL1271_RATES,
+		.formats = WL1271_FORMATS,
+	},
+},
+};
 /* Digital audio interface glue - connects codec <--> CPU */
 static struct snd_soc_dai_link archos_dai[] = {
 	{
@@ -760,6 +787,13 @@ static int __devinit archos_soc_probe(struct platform_device *pdev)
 		goto err4;
 	}
 
+	ret = snd_soc_register_dais(&archos_snd_device_wl1271->dev, archos_dai_driver, ARRAY_SIZE(archos_dai_driver));
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("%s: unable to register SOC DAI, ret=%i\n",
+				__func__, ret);
+		goto err5;
+	}
+
 	platform_set_drvdata(archos_snd_device_wm8988, &snd_soc_archos_wm8988);
 	platform_set_drvdata(archos_snd_device_wl1271, &snd_soc_archos_wl1271);
 
@@ -777,6 +811,7 @@ static int __devinit archos_soc_probe(struct platform_device *pdev)
 err7:
 	platform_device_unregister(archos_snd_device_wm8988);
 err6:
+err5:
 	platform_device_put(archos_snd_device_wl1271);
 err4:
 	platform_device_put(archos_snd_device_wm8988);

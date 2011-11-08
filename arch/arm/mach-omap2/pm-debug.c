@@ -39,6 +39,7 @@
 #include "prm.h"
 #include "cm.h"
 #include "pm.h"
+#include "control.h"
 
 int omap2_pm_debug;
 
@@ -191,13 +192,14 @@ enum {
 struct pm_module_def {
 	char name[16]; /* Name of the module */
 	short type; /* CM or PRM */
-	unsigned short offset;
+	short offset;
 	int low; /* First register address on this module */
 	int high; /* Last register address on this module */
 };
 
 #define MOD_CM 0
 #define MOD_PRM 1
+#define MOD_SCM 2
 
 static const struct pm_module_def *pm_dbg_reg_modules;
 static const struct pm_module_def omap3_pm_reg_modules[] = {
@@ -229,6 +231,11 @@ static const struct pm_module_def omap3_pm_reg_modules[] = {
 	{ "GLBL", MOD_PRM, OMAP3430_GR_MOD, 0x20, 0xe4 },
 	{ "NEON", MOD_PRM, OMAP3430_NEON_MOD, 0x58, 0xe8 },
 	{ "USB", MOD_PRM, OMAP3430ES2_USBHOST_MOD, 0x58, 0xe8 },
+
+	{ "PADCONF1", MOD_SCM, 0, 0x030, 0x264 },
+	{ "PADCONF2", MOD_SCM, 0, 0x5a0, 0x5f8 },
+	{ "PADCONF_WKUP1", MOD_SCM, 0, 0xa00, 0xa24 },
+	{ "PADCONF_WKUP2", MOD_SCM, 0, 0xa4c, 0xa58 },
 	{ "", 0, 0, 0, 0 },
 };
 
@@ -341,11 +348,16 @@ static int pm_dbg_show_regs(struct seq_file *s, void *unused)
 				pm_dbg_reg_modules[i].name,
 				(u32)(cmbase +
 				pm_dbg_reg_modules[i].offset));
-		else
+		else if (pm_dbg_reg_modules[i].type == MOD_PRM)
 			seq_printf(s, "MOD: PRM_%s (%08x)\n",
 				pm_dbg_reg_modules[i].name,
 				(u32)(prmbase +
 				pm_dbg_reg_modules[i].offset));
+		else
+			seq_printf(s, "MOD: SCM_%s (%08x)\n", 
+					pm_dbg_reg_modules[i].name,
+					(u32)(OMAP343X_SCM_BASE + 
+					pm_dbg_reg_modules[i].offset));
 
 		for (j = pm_dbg_reg_modules[i].low;
 			j <= pm_dbg_reg_modules[i].high; j += 4) {
@@ -356,7 +368,7 @@ static int pm_dbg_show_regs(struct seq_file *s, void *unused)
 					seq_printf(s, "\n");
 					linefeed = 0;
 				}
-				seq_printf(s, "  %02x => %08lx", j, val);
+				seq_printf(s, "  %03x => %08lx", j, val);
 				if (regs % 4 == 0)
 					linefeed = 1;
 			}
@@ -384,9 +396,12 @@ static void pm_dbg_regset_store(u32 *ptr)
 			if (pm_dbg_reg_modules[i].type == MOD_CM)
 				val = cm_read_mod_reg(
 					pm_dbg_reg_modules[i].offset, j);
-			else
+			else if (pm_dbg_reg_modules[i].type == MOD_PRM)
 				val = prm_read_mod_reg(
 					pm_dbg_reg_modules[i].offset, j);
+			else
+				val = omap_ctrl_readl(
+					pm_dbg_reg_modules[i].offset + j);
 			*(ptr++) = val;
 		}
 		i++;
@@ -651,17 +666,18 @@ static int option_set(void *data, u64 val)
 	if (option == &wakeup_timer_milliseconds && val >= 1000)
 		return -EINVAL;
 
-	if (cpu_is_omap443x() && (omap_type() == OMAP2_DEVICE_TYPE_GP) &&
-		omap_rev() < OMAP4430_REV_ES2_3)
+	/* force disable off mode on bugged silicon */
+	if (option == &enable_off_mode && cpu_is_omap443x() &&
+		(omap_type() == OMAP2_DEVICE_TYPE_GP) && omap_rev() < OMAP4430_REV_ES2_3)
 		*option = 0;
 	else
 		*option = val;
 
 	if (option == &enable_off_mode) {
 		if (cpu_is_omap34xx())
-			omap3_pm_off_mode_enable(val);
+			omap3_pm_off_mode_enable(enable_off_mode);
 		else if (cpu_is_omap44xx())
-			omap4_pm_off_mode_enable(val);
+			omap4_pm_off_mode_enable(enable_off_mode);
 	}
 	if (option == &enable_sr_vp_debug && val)
 		pr_notice("Beware that enabling this option will allow user "
@@ -834,26 +850,26 @@ static int __init pm_dbg_init(void)
 
 		}
 
-	(void) debugfs_create_file("volt_off_mode", S_IRUGO | S_IWUGO, d,
+	(void) debugfs_create_file("volt_off_mode", S_IRUGO | S_IWUG, d,
 				   &volt_off_mode, &pm_dbg_option_fops);
-	(void) debugfs_create_file("enable_off_mode", S_IRUGO | S_IWUGO, d,
+	(void) debugfs_create_file("enable_off_mode", S_IRUGO | S_IWUG, d,
 				   &enable_off_mode, &pm_dbg_option_fops);
-	(void) debugfs_create_file("sleep_while_idle", S_IRUGO | S_IWUGO, d,
+	(void) debugfs_create_file("sleep_while_idle", S_IRUGO | S_IWUG, d,
 				   &sleep_while_idle, &pm_dbg_option_fops);
-	(void) debugfs_create_file("wakeup_timer_seconds", S_IRUGO | S_IWUGO, d,
+	(void) debugfs_create_file("wakeup_timer_seconds", S_IRUGO | S_IWUG, d,
 				   &wakeup_timer_seconds, &pm_dbg_option_fops);
 	(void) debugfs_create_file("wakeup_timer_milliseconds",
-			S_IRUGO | S_IWUGO, d, &wakeup_timer_milliseconds,
+			S_IRUGO | S_IWUG, d, &wakeup_timer_milliseconds,
 			&pm_dbg_option_fops);
-	(void) debugfs_create_file("enable_sr_vp_debug",  S_IRUGO | S_IWUGO, d,
+	(void) debugfs_create_file("enable_sr_vp_debug",  S_IRUGO | S_IWUG, d,
 				   &enable_sr_vp_debug, &pm_dbg_option_fops);
 
 	if (cpu_is_omap44xx()) {
 		omap4_pmd_clks_init();
-		debugfs_create_file("pmd_clks_enable", S_IRUGO|S_IWUGO, d,
+		debugfs_create_file("pmd_clks_enable", S_IRUGO|S_IWUG, d,
 				&pmd_clks_enable, &pm_debug_pmd_clks_fops);
 
-		debugfs_create_file("dpll_cascade_enable", S_IRUGO|S_IWUGO, d,
+		debugfs_create_file("dpll_cascade_enable", S_IRUGO|S_IWUG, d,
 				&dpll_cascade_global_state,
 				&pm_debug_dpll_cascading_fops);
 	}

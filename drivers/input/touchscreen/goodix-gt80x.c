@@ -111,8 +111,11 @@ u8 twl6030_init_sequences[3][53] = {
 struct goodix_gt80x_priv {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
+	struct workqueue_struct *wq;
 
 	int irq;
+
+	struct work_struct work;
 
 	void (*set_power)(int on);
 	void (*set_shutdown)(int on);
@@ -237,9 +240,10 @@ static inline int goodix_gt80x_read_u16(struct i2c_client * client, u8 addr, u16
 	return ret;
 }
 
-static irqreturn_t goodix_gt80x_irq_worker(int irq, void * p)
+static void goodix_gt80x_work_func(struct work_struct *work)
 {
-	struct goodix_gt80x_priv *priv = p;
+	struct goodix_gt80x_priv *priv =
+		container_of(work, struct goodix_gt80x_priv, work);
 	u8 regs[0x22];
 	int ret;
 	int i = 0;
@@ -296,6 +300,7 @@ static irqreturn_t goodix_gt80x_irq_worker(int irq, void * p)
 				// issue rey_release and sync
 				input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, i);
 				input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, p);
+				input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, p);
 
 				input_mt_sync(priv->input_dev);
 #ifdef SINGLETOUCH_COMPAT
@@ -331,6 +336,7 @@ static irqreturn_t goodix_gt80x_irq_worker(int irq, void * p)
 				input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, y);
 
 				input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, p);
+				input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, p);
 				input_mt_sync(priv->input_dev);
 
 #ifdef SINGLETOUCH_COMPAT
@@ -347,6 +353,18 @@ static irqreturn_t goodix_gt80x_irq_worker(int irq, void * p)
 	input_sync(priv->input_dev);
 
 exit_work:
+	//enable_irq(priv->irq);
+	return;
+}
+
+static irqreturn_t goodix_gt80x_irq_handler(int irq, void * p)
+{
+	struct goodix_gt80x_priv *priv = p;
+
+	//disable_irq_nosync(priv->irq);
+
+	queue_work(priv->wq, &priv->work);
+
 	return IRQ_HANDLED;
 }
 
@@ -426,6 +444,12 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 		priv->init_version = pdata->init_version;
 	}
 
+	priv->wq = create_singlethread_workqueue(id->name);
+	if (priv->wq == NULL) {
+		ret = -ENOMEM;
+		goto err_wq_create;
+	}
+
 	priv->input_dev = input_allocate_device();
 	if (priv->input_dev == NULL) {
 		ret = -ENOMEM;
@@ -435,6 +459,8 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 	ret = goodix_gt80x_startup_sequence(client);
 	if (ret < 0)
 		goto err_detect_failed;
+
+	INIT_WORK(&priv->work, goodix_gt80x_work_func);
 
 	priv->input_dev->name = id->name;
 
@@ -448,6 +474,7 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 	set_bit(ABS_MT_POSITION_Y, priv->input_dev->absbit);
 	set_bit(ABS_MT_TRACKING_ID, priv->input_dev->absbit);
 	set_bit(ABS_MT_TOUCH_MAJOR, priv->input_dev->absbit);
+	set_bit(ABS_MT_WIDTH_MAJOR, priv->input_dev->absbit);
 
 	if (goodix_gt80x_read_u16(client, d.x_max, &priv->x_max) != sizeof(u16)) {
 		ret = -ENODEV;
@@ -472,6 +499,8 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 	}
 
 	input_set_abs_params(priv->input_dev, ABS_PRESSURE, 0, 0xff, 0, 0);
+	input_set_abs_params(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0, 0x80, 0, 0);
+	input_set_abs_params(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0, 0x80, 0, 0);
 
 	ret = input_register_device(priv->input_dev);
 	if (ret) {
@@ -481,9 +510,7 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 		goto err_input_register_failed;
 	}
 
-	ret = request_threaded_irq(priv->irq,
-			NULL, goodix_gt80x_irq_worker,
-			IRQF_TRIGGER_RISING,
+	ret = request_irq(priv->irq, goodix_gt80x_irq_handler, IRQF_TRIGGER_RISING,
 			client->name, priv);
 	if (ret) {
 		ret = -ENODEV;
@@ -513,6 +540,9 @@ err_detect_failed:
 	input_free_device(priv->input_dev);
 
 err_input_alloc_failed:
+	destroy_workqueue(priv->wq);
+
+err_wq_create:
 	kfree(priv);
 
 	return ret;
@@ -525,6 +555,8 @@ static int goodix_gt80x_remove(struct i2c_client *client)
 	unregister_early_suspend(&priv->early_suspend);
 #endif
 	disable_irq_wake(priv->irq);
+	destroy_workqueue(priv->wq);
+
 	free_irq(priv->irq, priv);
 
 	input_unregister_device(priv->input_dev);
@@ -539,7 +571,10 @@ static int goodix_gt80x_suspend(struct i2c_client *client, pm_message_t mesg)
 {
 	struct goodix_gt80x_priv *priv = i2c_get_clientdata(client);
 
+	disable_irq_wake(priv->irq);
 	disable_irq(priv->irq);
+
+	flush_work(&priv->work);
 
 	goodix_gt80x_power(client, 0);
 
@@ -554,6 +589,7 @@ static int goodix_gt80x_resume(struct i2c_client *client)
 		dev_err(&client->dev, "%s: failed ?\n", __FUNCTION__);
 
 	enable_irq(priv->irq);
+	enable_irq_wake(priv->irq);
 
 	return 0;
 }

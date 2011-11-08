@@ -577,7 +577,8 @@ static int ehci_hcd_omap_drv_suspend(struct device *dev)
 
 	// Hibernate the high speed interface
 
-	ret = uhhtllp->hibernate(OMAP_EHCI);
+	if (uhhtllp->hibernate != NULL)
+		ret = uhhtllp->hibernate(OMAP_EHCI);
 
 	return ret;
 
@@ -601,7 +602,8 @@ static int ehci_hcd_omap_drv_resume(struct device *dev)
 
 	// Wakeup the high speed interface
 
-	ret = uhhtllp->wakeup(OMAP_EHCI);
+	if (uhhtllp->wakeup != NULL)
+		ret = uhhtllp->wakeup(OMAP_EHCI);
 	return ret;
 
 #if 0

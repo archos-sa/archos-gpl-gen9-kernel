@@ -29,6 +29,8 @@
 #include <mach/tiler.h>
 #include <linux/slab.h>
 
+#include <media/cma.h>
+
 #include "dsscomp.h"
 
 /* free overlay structs */
@@ -282,7 +284,7 @@ parse_again:
 	INIT_LIST_HEAD(&comp->ois);
 	comp->ovl_mask = comp->ovl_dmask = 0;
 	comp->frm.sync_id = sync_id;
-	comp->frm.mgr.ix = display_ix;
+	comp->frm.mgr.display_index = display_ix;
 
 	/* :TODO: retrieve last manager configuration */
 
@@ -387,7 +389,7 @@ int dsscomp_set_ovl(dsscomp_t comp, struct dss2_ovl_info *ovl)
 		struct omap_overlay *o;
 		struct dss2_overlay *oi;
 		dsscomp_t chkcomp;
-		u32 ix = comp->frm.mgr.ix;
+		u32 ix = comp->frm.mgr.display_index;
 		if (ix < cdev->num_displays &&
 		    cdev->displays[ix] &&
 		    cdev->displays[ix]->manager)
@@ -560,7 +562,7 @@ int dsscomp_set_mgr(dsscomp_t comp, struct dss2_mgr_info *mgr)
 		}
 
 		/* set display index in manager info */
-		mgr->ix = comp->frm.mgr.ix;
+		mgr->display_index = comp->frm.mgr.display_index;
 		comp->frm.mgr = *mgr;
 		r = 0;
  done:
@@ -653,12 +655,15 @@ void dsscomp_drop(dsscomp_t c)
 	if (debug & DEBUG_COMPOSITIONS)
 		dev_info(DEV(cdev), "[%08x] released\n", c->frm.sync_id);
 
-#ifdef CONFIG_TILER_OMAP
 	list_for_each_entry_safe(o, o2, &c->ois, q) {
-		if (o->ovl.cfg.enabled && o->ovl.ba)
+		if (o->ovl.cfg.enabled && o->ovl.ba) {
+#ifdef CONFIG_TILER_OMAP
 			tiler_set_buf_state(o->ovl.ba, TILBUF_FREE);
-	}
+#elif defined(CONFIG_VIDEO_CMA)
+			cma_set_buf_state(o->ovl.ba, CMABUF_FREE);
 #endif
+		}
+	}
 	list_for_each_entry_safe(o, o2, &c->ois, q)
 		list_move(&o->q, &free_ois);
 	list_move(&c->q, &mgrq[c->ix].free_cis);
@@ -704,7 +709,7 @@ int dsscomp_apply(dsscomp_t comp)
 	/* check if the display is valid and used */
 	r = -ENODEV;
 	d = &comp->frm;
-	display_ix = d->mgr.ix;
+	display_ix = d->mgr.display_index;
 	if (display_ix >= cdev->num_displays)
 		goto done;
 	dssdev = cdev->displays[display_ix];
@@ -823,10 +828,11 @@ done_ovl:
 		}
 	} else {
 		/* wait for sync to avoid tear */
-		r = mgr->apply(mgr) ? : mgr->wait_for_vsync(mgr);
-		if (r) {
+		r = mgr->apply(mgr);
+		if (!r)
+			mgr->wait_for_vsync(mgr);
+		else
 			dev_err(DEV(cdev), "failed while applying %d", r);
-		}
 
 		/* ignore this error if callback has already been registered */
 		if (!mgr->info_dirty)
@@ -891,7 +897,7 @@ int dsscomp_wait(dsscomp_t comp, enum dsscomp_wait_phase phase, int timeout)
 			"release", id);
 
 	if (!IS_ERR(comp) && !is_wait_over(comp, phase)) {
-		u32 ix = comp->frm.mgr.ix;
+		u32 ix = comp->frm.mgr.display_index;
 
 		mutex_unlock(&mgrq[comp->ix].mtx);
 

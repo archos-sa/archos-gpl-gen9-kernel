@@ -43,6 +43,7 @@
 #include <plat/dsscomp.h>
 #include "dsscomp.h"
 #include <mach/tiler.h>
+#include <media/cma.h>
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 #include <linux/earlysuspend.h>
@@ -85,9 +86,9 @@ static long setup_mgr(struct dsscomp_dev *cdev,
 		dump_ovl_info(cdev, d->ovls + i);
 
 	/* verify display is valid and connected */
-	if (d->mgr.ix >= cdev->num_displays)
+	if (d->mgr.display_index >= cdev->num_displays)
 		return -EINVAL;
-	dev = cdev->displays[d->mgr.ix];
+	dev = cdev->displays[d->mgr.display_index];
 	if (!dev)
 		return -EINVAL;
 
@@ -109,36 +110,40 @@ void dsscomp_prepdata(struct dsscomp_setup_mgr_data *d)
 {
 	int i;
 
-#ifdef CONFIG_TILER_OMAP
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
 		u32 addr = (u32) oi->address;
 		if (oi->cfg.enabled) {
 			/* convert addresses to user space */
 			oi->ba = hwc_virt_to_phys(addr);
-			if (oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) {
+			if ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY)) {
 				oi->uv = hwc_virt_to_phys(addr +
 					oi->cfg.height * oi->cfg.stride);
+#ifdef CONFIG_TILER_OMAP
 				tiler_set_buf_state(oi->ba, TILBUF_BUSY);
+#elif defined(CONFIG_VIDEO_CMA)
+				cma_set_buf_state(oi->ba, CMABUF_BUSY);
+#endif
 			}
 		}
 	}
-#endif
 }
 EXPORT_SYMBOL(dsscomp_prepdata);
 
 void dsscomp_prepdata_drop(struct dsscomp_setup_mgr_data *d)
 {
-
-#ifdef CONFIG_TILER_OMAP
 	int i;
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
 		if (oi->cfg.enabled)
-			if (oi->cfg.color_mode == OMAP_DSS_COLOR_NV12)
+			if ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY)) {
+#ifdef CONFIG_TILER_OMAP
 				tiler_set_buf_state(oi->ba, TILBUF_FREE);
-	}
+#elif defined(CONFIG_VIDEO_CMA)
+				cma_set_buf_state(oi->ba, CMABUF_FREE);
 #endif
+			}
+	}
 }
 EXPORT_SYMBOL(dsscomp_prepdata_drop);
 
@@ -170,14 +175,17 @@ dsscomp_t dsscomp_createcomp(struct omap_overlay_manager *mgr,
 
 	return comp;
 cleanup:
-#ifdef CONFIG_TILER_OMAP
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
 		if (oi->cfg.enabled &&
-		    oi->cfg.color_mode == OMAP_DSS_COLOR_NV12)
+		    ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY))) {
+#ifdef CONFIG_TILER_OMAP
 			tiler_set_buf_state(oi->ba, TILBUF_FREE);
-	}
+#elif defined(CONFIG_VIDEO_CMA)
+			cma_set_buf_state(oi->ba, CMABUF_FREE);
 #endif
+		}
+	}
 	return NULL;
 }
 EXPORT_SYMBOL(dsscomp_createcomp);
@@ -235,7 +243,7 @@ static long query_display(struct dsscomp_dev *cdev,
 		dis->mgr.trans_enabled = mgr->info.trans_enabled;
 		dis->mgr.trans_key = mgr->info.trans_key;
 		dis->mgr.trans_key_type = mgr->info.trans_key_type;
-		dis->mgr.ix = mgr->id;
+		dis->mgr.display_index = mgr->id;
 	} else {
 		/* display is disabled if it has no manager */
 		memset(&dis->mgr, 0, sizeof(dis->mgr));
@@ -261,9 +269,9 @@ static long check_ovl(struct dsscomp_dev *cdev,
 		swap(c->win.w, c->win.h);
 
 	/* get display */
-	if (chk->mgr.ix >= cdev->num_displays)
+	if (chk->mgr.display_index >= cdev->num_displays)
 		return -EINVAL;
-	dev = cdev->displays[chk->mgr.ix];
+	dev = cdev->displays[chk->mgr.display_index];
 	if (!dev)
 		return -EINVAL;
 
@@ -458,7 +466,9 @@ static void dsscomp_early_suspend(struct early_suspend *h)
 	struct {
 		struct dsscomp_setup_mgr_data set;
 		struct dss2_ovl_info ovl[MAX_OVERLAYS];
-	} p;
+	} p = {
+		.set.mgr.alpha_blending = 1
+		};
 	blanked = true;
 
 	for (d = 0; d < cdev->num_displays; d++) {
@@ -490,8 +500,7 @@ static void dsscomp_early_suspend(struct early_suspend *h)
 			}
 		}
 
-		p.set.mgr.alpha_blending = 1;
-		p.set.mgr.ix = d;
+		p.set.mgr.display_index = d;
 		p.set.mode = DSSCOMP_SETUP_DISPLAY;
 		setup_mgr(cdev, &p.set, true);
 	}

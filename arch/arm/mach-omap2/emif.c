@@ -21,6 +21,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/notifier.h>
+#include <linux/reboot.h>
 
 #include <plat/omap_hwmod.h>
 #include <plat/omap_device.h>
@@ -611,9 +612,9 @@ static void setup_registers(u32 emif_nr, struct emif_regs *regs,
 		     base + OMAP44XX_EMIF_PWR_MGMT_CTRL_SHDW);
 
 	/* Enable self refresh mode */
-	__raw_writel(EMIF_PWR_MGMT_CTRL | 0x200,
-		base + OMAP44XX_EMIF_PWR_MGMT_CTRL);
-
+	__raw_writel(EMIF_PWR_MGMT_CTRL |
+		     (LP_MODE_SELF_REFRESH << OMAP44XX_REG_LP_MODE_SHIFT),
+		     base + OMAP44XX_EMIF_PWR_MGMT_CTRL);
 
 	__raw_writel(regs->temp_alert_config,
 		     base + OMAP44XX_EMIF_TEMP_ALERT_CONFIG);
@@ -798,6 +799,13 @@ static irqreturn_t emif_threaded_isr(int irq, void *dev_id)
 			       KOBJ_CHANGE);
 		/* clear the bit */
 		emif_notify_pending &= ~(1 << emif_nr);
+	}
+
+	if (emif_temperature_level[emif_nr] >=
+			SDRAM_TEMP_VERY_HIGH_SHUTDOWN) {
+		pr_emerg("EMIF %d: SDRAM temperature exceeds operating"
+			 "limit.. Shutdown system...\n", emif_nr + 1);
+		kernel_power_off();
 	}
 
 	return IRQ_HANDLED;
@@ -1120,9 +1128,12 @@ int do_setup_device_details(u32 emif_nr,
 				   &dev_attr_temperature));
 	kobject_uevent(&(emif[emif_nr].pdev->dev.kobj), KOBJ_ADD);
 
-	if (emif_temperature_level[emif_nr] == SDRAM_TEMP_VERY_HIGH_SHUTDOWN)
+	if (emif_temperature_level[emif_nr] >= SDRAM_TEMP_VERY_HIGH_SHUTDOWN) {
 		pr_emerg("EMIF %d: SDRAM temperature exceeds operating"
-			 "limit.. Needs shut down!!!", emif_nr + 1);
+			 "limit.. Needs shutdown...\n", emif_nr + 1);
+		machine_restart(NULL);
+	}
+
 	return 0;
 }
 

@@ -78,8 +78,12 @@
  *  FIXME : The L2 prefetch hints seems to break MPU OSWR. Remove them
  * for time being.
  */
-#define OMAP446X_PL310_POR_ES1				0x42000007
-#define OMAP446X_PL310_POR				0x52000007
+#define OMAP446X_PL310_POR_ES1				0x40000007
+#define OMAP446X_PL310_POR				0x50000007
+
+/* L2 controller Data RAM latency */
+#define OMAP443X_PL310_D_RAM_LAT			0x00000111
+#define OMAP446X_PL310_D_RAM_LAT			0x00000110
 
 #define A9_ES1_REV					0x410FC091
 
@@ -106,10 +110,11 @@ extern dma_addr_t omap4_secure_ram_phys;
 extern void *so_ram_address;
 
 extern bool in_dpll_cascading;
+extern bool abe_can_enter_dpll_cascading;
 extern struct rw_semaphore dpll_cascading_lock;
 
 extern void __init gic_init_irq(void);
-extern void omap_smc1(u32 fn, u32 arg);
+extern void omap_smc1(u32 fn, u32 r0, u32 r1);
 extern u32 omap_smc2(u32 id, u32 falg, u32 pargs);
 extern u32 omap4_secure_dispatcher(u32 idx, u32 flag, u32 nargs,
 				u32 arg1, u32 arg2, u32 arg3, u32 arg4);
@@ -118,11 +123,17 @@ extern void omap4_enter_lowpower(unsigned int cpu, unsigned int power_state);
 extern void __omap4_cpu_suspend(unsigned int cpu, unsigned int save_state);
 extern unsigned long *omap4_cpu_wakeup_addr(void);
 extern int omap4_set_freq_update(void);
+#ifdef CONFIG_OMAP4_DPLL_CASCADING
 extern int dpll_cascading_blocker_hold(struct device *dev);
 extern int dpll_cascading_blocker_release(struct device *dev);
-extern int omap4_dpll_low_power_cascade_check_entry(void);
 extern int omap4_dpll_low_power_cascade_enter(void);
 extern int omap4_dpll_low_power_cascade_exit(void);
+#else
+static inline int dpll_cascading_blocker_hold(struct device *dev) { return 0; }
+static inline int dpll_cascading_blocker_release(struct device *dev) { return 0; }
+static inline int omap4_dpll_low_power_cascade_enter(void) { return 0; }
+static inline int omap4_dpll_low_power_cascade_exit(void) { return 0; }
+#endif
 
 extern void DO_WFI(void);
 

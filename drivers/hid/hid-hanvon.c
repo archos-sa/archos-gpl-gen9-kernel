@@ -535,6 +535,10 @@ static int hanvon_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		return -ENOMEM;
 	}
 
+	dev_err(&hdev->dev, "rename %s ", hdev->name);
+	strcpy(hdev->name, "unitec_usb_touch");
+	dev_err(&hdev->dev, "-> %s\n", hdev->name);
+
 	for (i = 0; i < MAX_NUM_POINTERS; i++) {
 		hrtimer_init(&td->pointer[i].timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 		td->pointer[i].timer.function = pointer_timer_callback;

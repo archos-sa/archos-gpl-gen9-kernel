@@ -18,6 +18,7 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
+#define DEBUG
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -38,48 +39,63 @@ static int panel_display_on(struct omap_dss_device *dssdev)
 {
 	int ret = 0;
 
-	printk(KERN_INFO "A8 disp enable\n");
+	pr_debug("%s\n", __func__);
+
+	/* side effect of omap_dpi_display_enable:
+	 * dssdev->state is set to OMAP_DSS_DISPLAY_ENABLED,
+	 * hence no need to set it manually at function exit */
 	ret = omapdss_dpi_display_enable(dssdev);
-
-	if (dssdev->platform_enable && (ret == 0))
+	if ((ret == 0) && dssdev->platform_enable) {
 		ret = dssdev->platform_enable(dssdev);
-
-	dssdev->state = OMAP_DSS_DISPLAY_ACTIVE;
+		/* if platform_enable fails, need to disable dpi
+		 * again and force state to OMAP_DSS_DISPLAY_DISABLED */
+		if (ret) {
+			omapdss_dpi_display_disable(dssdev);
+			dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
+		}
+	}
 	
 	return ret;
 }
 
 static void panel_display_off(struct omap_dss_device *dssdev)
 {
-	printk(KERN_INFO "A8 disp disable\n");
+	pr_debug("%s\n", __func__);
 
 	if (dssdev->platform_disable)
 		dssdev->platform_disable(dssdev);
 
-	omapdss_dpi_display_disable(dssdev);
-
+	/* side effect of omap_dpi_display_disable:
+	 * dssdev->state is set to OMAP_DSS_DISPLAY_DISABLED */
+	omapdss_dpi_display_disable(dssdev);	
 }
 
 static int panel_enable(struct omap_dss_device *dssdev)
 {
+	pr_debug("%s state:%i\n", __func__,
+			dssdev->state);
 
 	if (dssdev->state != OMAP_DSS_DISPLAY_DISABLED)
 		return -EINVAL;
 	
 	return panel_display_on(dssdev);
-
 }
 
 static void panel_disable(struct omap_dss_device *dssdev)
 {
-	if (dssdev->state == OMAP_DSS_DISPLAY_ACTIVE)
+	pr_debug("%s state:%i\n", __func__,
+			dssdev->state);
+
+	if (dssdev->state == OMAP_DSS_DISPLAY_ACTIVE ||
+	    dssdev->state == OMAP_DSS_DISPLAY_TRANSITION)
 		panel_display_off(dssdev);
-	
-	dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
 }
 
 static int panel_suspend(struct omap_dss_device *dssdev)
 {
+	pr_debug("%s state:%i\n", __func__,
+			dssdev->state);
+
 	if (dssdev->state != OMAP_DSS_DISPLAY_ACTIVE)
 		return -EINVAL;
 
@@ -92,6 +108,9 @@ static int panel_suspend(struct omap_dss_device *dssdev)
 
 static int panel_resume(struct omap_dss_device *dssdev)
 {
+	pr_debug("%s state:%i\n", __func__,
+			dssdev->state);
+
 	if (dssdev->state != OMAP_DSS_DISPLAY_SUSPENDED)
 		return -EINVAL;
 

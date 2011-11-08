@@ -388,6 +388,7 @@ static int ioctl_s_power(struct v4l2_int_device *s, enum v4l2_power on)
 	struct isp_device *isp = dev_get_drvdata(dev);
 	struct isp_csi_memvs_sensor *sensor = s->priv;
 	struct v4l2_rect src_rect;
+	static enum v4l2_power previous_power = V4L2_POWER_OFF;
 
 	switch (on) {
 	case V4L2_POWER_ON:
@@ -406,11 +407,15 @@ static int ioctl_s_power(struct v4l2_int_device *s, enum v4l2_power on)
 		break;
 	case V4L2_POWER_OFF:
 		/* Hmmm... Not sure here */
+		/* Make sure not to disable the MCLK twice in a row */
+		if (previous_power == V4L2_POWER_ON)
+			isp_disable_mclk(isp);
 		break;
 	case V4L2_POWER_STANDBY:
 		break;
 	}
 
+	previous_power = on;
 	return 0;
 }
 

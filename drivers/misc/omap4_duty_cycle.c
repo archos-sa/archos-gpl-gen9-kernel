@@ -59,7 +59,7 @@ module_param(cooling_rate, int, 0);
 
 static bool enabled;
 static int heating_budget;
-static int t_next_heating_end;
+static unsigned long t_next_heating_end;
 
 static struct workqueue_struct *duty_wq;
 static struct delayed_work work_exit_cool;
@@ -176,7 +176,7 @@ static int omap4_duty_frequency_change(struct notifier_block *nb,
 		break;
 	case OMAP4_DUTY_HEATING:
 		if (freqs->new < nitro_rate) {
-			heating_budget -= (t_next_heating_end - jiffies);
+			heating_budget -= jiffies_to_msecs(t_next_heating_end - jiffies);
 			if (heating_budget <= 0)
 				queue_work(duty_wq, &work_enter_cool0);
 			else

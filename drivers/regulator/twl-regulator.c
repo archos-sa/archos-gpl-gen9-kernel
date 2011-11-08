@@ -156,7 +156,7 @@ static int twl6030reg_is_enabled(struct regulator_dev *rdev)
 	val = twlreg_read(info, TWL_MODULE_PM_RECEIVER, VREG_STATE);
 	val = TWL6030_CFG_STATE_APP(val);
 
-	return grp && (val == TWL6030_CFG_STATE_ON || val == TWL6030_CFG_STATE_SLEEP);
+	return grp && (val == TWL6030_CFG_STATE_ON);
 }
 
 static int twlreg_enable(struct regulator_dev *rdev)
@@ -527,6 +527,8 @@ twl6030ldo_set_voltage(struct regulator_dev *rdev, int min_uV, int max_uV)
 	 * mV = 1000mv + 100mv * (vsel - 1)
 	 */
 	vsel = (min_uV/1000 - 1000)/100 + 1;
+	vsel |= (twlreg_read(info, TWL_MODULE_PM_RECEIVER, VREG_VOLTAGE)
+								      & 0x80);
 	return twlreg_write(info, TWL_MODULE_PM_RECEIVER, VREG_VOLTAGE, vsel);
 
 }
@@ -544,6 +546,7 @@ static int twl6030ldo_get_voltage(struct regulator_dev *rdev)
 	 * Use the below formula to calculate vsel
 	 * mV = 1000mv + 100mv * (vsel - 1)
 	 */
+	vsel &= 0x3F;
 	return (1000 + (100 * (vsel - 1))) * 1000;
 }
 

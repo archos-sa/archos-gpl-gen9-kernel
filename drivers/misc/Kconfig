@@ -429,10 +429,11 @@ config APANIC_PLABEL
 
 config OMAP4_DUTY_CYCLE
 	tristate "Control OPP_NITRO usage based on duty cycle strategy"
+	depends on !ARCHOS_OMAP4_DUTY_CYCLE
 	default n
 	---help---
- 	 If you are going to use OPP_NITRO with high level of leakage which.
- 	 could pontentially sustain a thermal runaway, say Y here.
+ 	 If you are going to use OPP_NITRO with high level of leakage which
+ 	 could potentially sustain a thermal runaway, say Y here.
 
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"

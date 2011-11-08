@@ -52,6 +52,19 @@
 #define CIFS_PORT 445
 #define RFC1001_PORT 139
 
+/*
+ * Define this to disable any call to mempool_resize.
+ * This is useful when the system does not have a lot
+ * of memory, since mempool_resize asks for contiguous
+ * memory areas. When this is enabled, some cifsd threads
+ * may fail to allocate the needed buffers, but this should
+ * only happen when the user tries to retrieve data from
+ * several cifs mount points at the same time (depending
+ * on the CIFS_MIN_RCV_POOL value), which is not a common
+ * usecase. So be sure CIFS_MIN_RCV_POOL is big enough.
+ */
+#define STATIC_MEMORY_POOL_SIZE
+
 extern void SMBNTencrypt(unsigned char *passwd, unsigned char *c8,
 			 unsigned char *p24);
 
@@ -343,9 +356,11 @@ cifs_demultiplex_thread(struct TCP_Server_Info *server)
 	cFYI(1, "Demultiplex PID: %d", task_pid_nr(current));
 
 	length = atomic_inc_return(&tcpSesAllocCount);
+#ifndef STATIC_MEMORY_POOL_SIZE
 	if (length > 1)
 		mempool_resize(cifs_req_poolp, length + cifs_min_rcv,
 				GFP_KERNEL);
+#endif
 
 	set_freezable();
 	while (server->tcpStatus != CifsExiting) {
@@ -752,9 +767,11 @@ multi_t2_fnd:
 	kfree(server);
 
 	length = atomic_dec_return(&tcpSesAllocCount);
+#ifndef STATIC_MEMORY_POOL_SIZE
 	if (length  > 0)
 		mempool_resize(cifs_req_poolp, length + cifs_min_rcv,
 				GFP_KERNEL);
+#endif
 
 	/* if server->tsk was NULL then wait for a signal before exiting */
 	if (!task_to_wake) {

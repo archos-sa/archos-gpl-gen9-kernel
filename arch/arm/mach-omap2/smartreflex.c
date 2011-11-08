@@ -66,6 +66,7 @@ struct omap_sr {
 /* sr_list contains all the instances of smartreflex module */
 static LIST_HEAD(sr_list);
 
+static struct clk *system_ck;
 static struct omap_smartreflex_class_data *sr_class;
 static struct omap_smartreflex_pmic_data *sr_pmic_data;
 
@@ -229,21 +230,16 @@ static irqreturn_t sr_omap_isr(int irq, void *data)
 
 static void sr_set_clk_length(struct omap_sr *sr)
 {
-	struct clk *sys_ck;
 	u32 sys_clk_speed;
 
 	if (cpu_is_omap34xx()) {
-		sys_ck = clk_get(NULL, "sys_ck");
-		sys_clk_speed = clk_get_rate(sys_ck);
-		clk_put(sys_ck);
+		sys_clk_speed = clk_get_rate(system_ck);
 	} else {
 		/* SR_xxx_SYSCLK runs at 12.288MHz in DPLL cascading */
 		if (in_dpll_cascading)
 			sys_clk_speed = 12288000;
 		else {
-			sys_ck = clk_get(NULL, "sys_clkin_ck");
-			sys_clk_speed = clk_get_rate(sys_ck);
-			clk_put(sys_ck);
+			sys_clk_speed = clk_get_rate(system_ck);
 		}
 	}
 
@@ -1095,6 +1091,14 @@ static int __init omap_smartreflex_probe(struct platform_device *pdev)
 	}
 	if (irq)
 		sr_info->irq = irq->start;
+	if (cpu_is_omap34xx())
+		system_ck = clk_get(NULL, "sys_ck");
+	else if (cpu_is_omap44xx())
+		system_ck = clk_get(NULL, "sys_clkin_ck");
+	else {
+		ret = -ENODEV;
+		goto err_release_region;
+	}
 	sr_set_clk_length(sr_info);
 	sr_set_regfields(sr_info);
 
@@ -1116,13 +1120,13 @@ static int __init omap_smartreflex_probe(struct platform_device *pdev)
 	strcpy(name, "sr_");
 	strcat(name, sr_info->voltdm->name);
 	dbg_dir = debugfs_create_dir(name, sr_dbg_dir);
-	(void) debugfs_create_file("autocomp", S_IRUGO | S_IWUGO, dbg_dir,
+	(void) debugfs_create_file("autocomp", S_IRUGO | S_IWUG, dbg_dir,
 				(void *)sr_info, &pm_sr_fops);
-	(void) debugfs_create_file("errweight", S_IRUGO | S_IWUGO, dbg_dir,
+	(void) debugfs_create_file("errweight", S_IRUGO | S_IWUG, dbg_dir,
 				&sr_info->err_weight, &sr_params_fops);
-	(void) debugfs_create_file("errmaxlimit", S_IRUGO | S_IWUGO, dbg_dir,
+	(void) debugfs_create_file("errmaxlimit", S_IRUGO | S_IWUG, dbg_dir,
 				&sr_info->err_maxlimit, &sr_params_fops);
-	(void) debugfs_create_file("errminlimit", S_IRUGO | S_IWUGO, dbg_dir,
+	(void) debugfs_create_file("errminlimit", S_IRUGO | S_IWUG, dbg_dir,
 				&sr_info->err_minlimit, &sr_params_fops);
 
 #endif
@@ -1163,6 +1167,7 @@ static int __devexit omap_smartreflex_remove(struct platform_device *pdev)
 	list_del(&sr_info->node);
 	iounmap(sr_info->base);
 	kfree(sr_info);
+	clk_put(system_ck);
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (mem)
 		release_mem_region(mem->start, resource_size(mem));

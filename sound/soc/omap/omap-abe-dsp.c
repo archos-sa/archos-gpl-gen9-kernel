@@ -104,6 +104,8 @@
 
 #define ABE_ROUTES_UL		14
 
+bool abe_can_enter_dpll_cascading;	/* initialized to false by gcc */
+
 /* TODO: fine tune for ping pong - buffer is 2 periods of 12k each*/
 static const struct snd_pcm_hardware omap_abe_hardware = {
 	.info			= SNDRV_PCM_INFO_MMAP |
@@ -2269,14 +2271,6 @@ static void abe_early_suspend(struct early_suspend *handler)
 	struct abe_data *abe = container_of(handler, struct abe_data,
 					    early_suspend);
 	int active = abe_fe_active_count(abe);
-	u32 reg;
-
-	/* Disable SD for MPU towards EMIF,L3_2 and L4CFG */
-	reg = OMAP4430_MEMIF_STATDEP_MASK | OMAP4430_L3_2_STATDEP_MASK
-		| OMAP4430_L4CFG_STATDEP_MASK;
-
-	cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM1_MPU_MOD,
-		OMAP4_CM_MPU_STATICDEP_OFFSET);
 
 	/*
 	 * enter dpll cascading when all conditions are met:
@@ -2294,16 +2288,6 @@ static void abe_late_resume(struct early_suspend *handler)
 {
 	struct abe_data *abe = container_of(handler, struct abe_data,
 					    early_suspend);
-	u32 reg, mask;
-
-	/* Enable SD for MPU towards EMIF,L3_2 and L4CFG */
-	reg = 1 << OMAP4430_MEMIF_STATDEP_SHIFT |
-		1 << OMAP4430_L3_2_STATDEP_SHIFT |
-		1 << OMAP4430_L4CFG_STATDEP_SHIFT;
-	mask = OMAP4430_MEMIF_STATDEP_MASK | OMAP4430_L3_2_STATDEP_MASK
-		| OMAP4430_L4CFG_STATDEP_MASK;
-	cm_rmw_mod_reg_bits(mask, reg, OMAP4430_CM1_MPU_MOD,
-		OMAP4_CM_MPU_STATICDEP_OFFSET);
 
 	/* exit dpll cascading since screen will be turned on */
 	dpll_cascading_blocker_hold(&abe->pdev->dev);
@@ -2358,7 +2342,7 @@ static int __devinit abe_engine_probe(struct platform_device *pdev)
 	abe->abe_pdata = pdata;
 	abe->pdev = pdev;
 	dpll_cascading_blocker_hold(&abe->pdev->dev);
-
+	abe_can_enter_dpll_cascading = true;
 	mutex_init(&abe->mutex);
 	mutex_init(&abe->opp_mutex);
 

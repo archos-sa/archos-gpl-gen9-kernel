@@ -36,7 +36,9 @@
 				   termination then *2 for unicode versions */
 #define MAX_PASSWORD_SIZE 16
 
-#define CIFS_MIN_RCV_POOL 4
+/* Set CIFS_MIN_RCV_POOL to 8 since memory pool resize has been disabled */
+//#define CIFS_MIN_RCV_POOL 4
+#define CIFS_MIN_RCV_POOL 8
 
 /*
  * MAX_REQ is the maximum number of requests that WE will send

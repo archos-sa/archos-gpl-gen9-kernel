@@ -227,10 +227,10 @@ static struct {
 	struct hdmi_audio_format audio_fmt;
 	struct hdmi_audio_dma audio_dma;
 	struct hdmi_core_audio_config audio_core_cfg;
+	struct omap_chip_id audio_must_use_tclk;
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
 	u32 notify_event_reg;
 	u32 cts_interval;
-	struct omap_chip_id audio_wa_chip_ids;
 	struct task_struct *wa_task;
 	u32 ack_payload;
 	bool audio_wa_started; /* HDMI WA guard*/
@@ -678,7 +678,7 @@ static void hdmi_core_audio_config(u32 name,
 	u8 acr_en;
 
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
-	if (omap_chip_is(hdmi.audio_wa_chip_ids))
+	if (omap_chip_is(hdmi.audio_must_use_tclk))
 		acr_en = 0;
 	else
 		acr_en = 1;
@@ -688,12 +688,19 @@ static void hdmi_core_audio_config(u32 name,
 
 	/* CTS_MODE */
 	WR_REG_32(name, HDMI_CORE_AV__ACR_CTRL,
-		/* MCLK_EN (0: Mclk is not used) */
+		/*
+		 * MCLK_EN: use TCLK for ACR packets. For devices that use
+		 * the MCLK, this is the first part of the MCLK initialization
+		 */
 		(0x0 << 2) |
 		/* Set ACR packets while audio is not present */
 		(acr_en << 1) |
 		/* CTS Source Select (1:SW, 0:HW) */
 		(audio_cfg->cts_mode << 0));
+
+	/* For devices using MCLK, this completes its initialization. */
+	if (!omap_chip_is(hdmi.audio_must_use_tclk))
+		REG_FLD_MOD(name, HDMI_CORE_AV__ACR_CTRL, 1, 2, 2);
 
 	REG_FLD_MOD(name, HDMI_CORE_AV__FREQ_SVAL, 0, 2, 0);
 	REG_FLD_MOD(name, HDMI_CORE_AV__N_SVAL1, audio_cfg->n, 7, 0);
@@ -1403,7 +1410,7 @@ static int hdmi_configure_acr(u32 pclk)
 	cts = pclk*(n/128)*deep_color / (fs/10);
 
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
-	if (omap_chip_is(hdmi.audio_wa_chip_ids)) {
+	if (omap_chip_is(hdmi.audio_must_use_tclk)) {
 		if (pclk && deep_color) {
 			cts_interval_qtt = 1000000 /
 				((pclk * deep_color) / 100);
@@ -1427,7 +1434,7 @@ static int hdmi_configure_acr(u32 pclk)
 int hdmi_lib_acr_wa_send_event(u32 payload)
 {
 	long tout;
-	if (omap_chip_is(hdmi.audio_wa_chip_ids)) {
+	if (omap_chip_is(hdmi.audio_must_use_tclk)) {
 		if (hdmi.notify_event_reg == HDMI_NOTIFY_EVENT_REG) {
 			notify_send_event(SYS_M3, 0, HDMI_AUDIO_WA_EVENT,
 					payload, 0);
@@ -1749,7 +1756,7 @@ int hdmi_lib_enable(struct hdmi_config *cfg)
 	REG_FLD_MOD(av_name, HDMI_CORE_AV__HDMI_CTRL, cfg->hdmi_dvi, 0, 0);
 
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
-	if (omap_chip_is(hdmi.audio_wa_chip_ids)) {
+	if (omap_chip_is(hdmi.audio_must_use_tclk)) {
 		if (hdmi.notify_event_reg == HDMI_NOTIFY_EVENT_NOTREG) {
 			r = ipc_register_notifier(&hdmi_syslink_notify_block);
 			hdmi.notify_event_reg = HDMI_NOTIFY_WAIT_FOR_IPC;
@@ -1788,10 +1795,10 @@ int hdmi_lib_init(void)
 
 	hdmi.base_core = hdmi.base_wp + 0x400;
 	hdmi.base_core_av = hdmi.base_wp + 0x900;
+	hdmi.audio_must_use_tclk.oc = CHIP_IS_OMAP4430ES2 |
+			CHIP_IS_OMAP4430ES2_1 | CHIP_IS_OMAP4430ES2_2;
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
 	hdmi.notify_event_reg = HDMI_NOTIFY_EVENT_NOTREG;
-	hdmi.audio_wa_chip_ids.oc = CHIP_IS_OMAP4430ES2 |
-			CHIP_IS_OMAP4430ES2_1 | CHIP_IS_OMAP4430ES2_2;
 	hdmi.audio_wa_started = false;
 #endif
 
@@ -1803,7 +1810,7 @@ int hdmi_lib_init(void)
 void hdmi_lib_exit(void){
 	iounmap(hdmi.base_wp);
 #ifdef CONFIG_OMAP_HDMI_AUDIO_WA
-	if (omap_chip_is(hdmi.audio_wa_chip_ids))
+	if (omap_chip_is(hdmi.audio_must_use_tclk))
 		ipc_unregister_notifier(&hdmi_syslink_notify_block);
 #endif
 }

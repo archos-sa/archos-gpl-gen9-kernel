@@ -288,6 +288,31 @@ void omap4_enter_sleep(unsigned int cpu, unsigned int power_state)
 		if (omap4_sar_save())
 			goto restore_state;
 		omap4_sar_overwrite();
+
+		/* Workaround for IVA AUTO RETENTION issue in OFF mode.
+		Present configuration lets IVA VD to transition from RET->OFF or ON->OFF
+		depending on the selected low power state. Disabling the AUTO_RETENTION
+		control for IVA voltage domain throughout so that PRCM voltage manager
+		state machine will never hit RETENTION state for IVA. During OFF mode
+		entry, IVA voltage domain will directly transition from ON -> OFF state */
+
+		cm_rmw_mod_reg_bits(OMAP4430_CLKTRCTRL_MASK,
+				OMAP34XX_CLKSTCTRL_FORCE_WAKEUP << OMAP4430_CLKTRCTRL_SHIFT,
+				OMAP4430_CM2_IVAHD_MOD,
+				OMAP4_CM_IVAHD_CLKSTCTRL_OFFSET);
+		udelay(100);
+
+		/* disable AUTO RET for IVA */
+		prm_rmw_mod_reg_bits(OMAP4430_AUTO_CTRL_VDD_IVA_L_MASK,
+				0x0 << OMAP4430_AUTO_CTRL_VDD_IVA_L_SHIFT,
+				OMAP4430_PRM_DEVICE_MOD,
+				OMAP4_PRM_VOLTCTRL_OFFSET);
+
+		cm_rmw_mod_reg_bits(OMAP4430_CLKTRCTRL_MASK,
+				OMAP34XX_CLKSTCTRL_FORCE_SLEEP << OMAP4430_CLKTRCTRL_SHIFT,
+				OMAP4430_CM2_IVAHD_MOD,
+				OMAP4_CM_IVAHD_CLKSTCTRL_OFFSET);
+		udelay(100);
 	}
 
 	omap4_enter_lowpower(cpu, power_state);
@@ -780,60 +805,110 @@ static void __init prcm_clear_statdep_regs(void)
 	return;
 #else
 	u32 reg;
+	struct clockdomain *l3_emif_clkdm, *l3_init_clkdm, *l4_per_clkdm;
 
 	pr_info("%s: Clearing static depndencies\n", __func__);
 
-#if 0
-	/*
-	 * REVISIT: Seen SGX issues with MPU -> EMIF. Keeping
-	 * it enabled.
-	 * REVISIT: Seen issue with MPU/DSP -> L3_2 and L4CFG.
-	 * Keeping them enabled
+	/* PRCM requires target clockdomain to be woken up before
+	 * changing its Static Dependencies settings
 	 */
-	/* MPU towards EMIF clockdomains */
-	reg = OMAP4430_MEMIF_STATDEP_MASK;
-	cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM1_MPU_MOD,
-		OMAP4_CM_MPU_STATICDEP_OFFSET);
-#endif
 
-	 /*
-	  * REVISIT: Issue seen with Ducati towards EMIF, L3_2, L3_1,
-	  * L4CFG and L4WKUP static
-	  * dependency. Keep it enabled as of now.
-	  */
-#if 0
-	/* Ducati towards EMIF, L3_2, L3_1, L4CFG and L4WKUP clockdomains */
-	reg = OMAP4430_MEMIF_STATDEP_MASK | OMAP4430_L3_1_STATDEP_MASK
-		| OMAP4430_L3_2_STATDEP_MASK | OMAP4430_L4CFG_STATDEP_MASK
-		| OMAP4430_L4WKUP_STATDEP_MASK;
-	cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM2_CORE_MOD,
-		OMAP4_CM_DUCATI_STATICDEP_OFFSET);
-#endif
-
-	/* SDMA towards EMIF, L3_2, L3_1, L4CFG, L4WKUP, L3INIT
-	 * and L4PER clockdomains
+	/* Note: Domains not built with SW_WKUP capability like
+	* L3_1, L3_2, L4_CFG and L4_WKUP may stall idle transition
+	* during 1 idle cycle if SD is changed while domain is OFF
 	*/
+
+	l3_emif_clkdm = clkdm_lookup("l3_emif_clkdm");
+	l3_init_clkdm = clkdm_lookup("l3_init_clkdm");
+	l4_per_clkdm = clkdm_lookup("l4_per_clkdm");
+
+	/* Configures MEMIF clockdomain in SW_WKUP */
+	omap2_clkdm_wakeup(l3_emif_clkdm);
+
+	/* Configures L3INIT clockdomain in SW_WKUP */
+	omap2_clkdm_wakeup(l3_init_clkdm);
+
+	/* Configures L4_PER clockdomain in SW_WKUP */
+	omap2_clkdm_wakeup(l4_per_clkdm);
+
+	/* Disable MPU and Ducati Static dependencies since
+	 * Asynchronous Bridge is safe on OMAP4460
+	 */
+	if (!cpu_is_omap443x()) {
+#if 0
+		/*
+		 * Since we have random crashes and freezes
+		 * on trimmed 4460 SOM's keep SD
+		 * between MPU and EMIF
+		 */
+
+		/* MPU towards EMIF clockdomain */
+		reg = OMAP4430_MEMIF_STATDEP_MASK;
+		cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+#endif
+		/* Ducati towards EMIF clockdomain */
+		reg = OMAP4430_MEMIF_STATDEP_MASK;
+		cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM2_CORE_MOD,
+			OMAP4_CM_DUCATI_STATICDEP_OFFSET);
+	}
+
+	/* Disable MPU and Ducati Static dependencies
+	 * towards L4CFG and L4WKUP on OMAP4460
+	 */
+	if (!cpu_is_omap443x()) {
+#if 0
+		/* MPU towards L4CFG and L4WKUP clockdomains */
+		reg = OMAP4430_L4CFG_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK;
+#else
+		/* MPU towards L4CFG clockdomains */
+		reg = OMAP4430_L4CFG_STATDEP_MASK;
+
+		/* Note: MPU towards L4WKUP needed for OFF mode */
+#endif
+		cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM1_MPU_MOD,
+			OMAP4_CM_MPU_STATICDEP_OFFSET);
+
+		/* Ducati towards L4CFG and L4WKUP clockdomains */
+		reg = OMAP4430_L4CFG_STATDEP_MASK |
+			OMAP4430_L4WKUP_STATDEP_MASK;
+		cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM2_CORE_MOD,
+			OMAP4_CM_DUCATI_STATICDEP_OFFSET);
+	}
+
+	/* SDMA towards EMIF, L3_1, L4CFG, L4WKUP, L3INIT and
+	 * L4PER clockdomains
+	 */
 	reg = OMAP4430_MEMIF_STATDEP_MASK | OMAP4430_L3_1_STATDEP_MASK
-		| OMAP4430_L3_2_STATDEP_MASK | OMAP4430_L4CFG_STATDEP_MASK
-		| OMAP4430_L4WKUP_STATDEP_MASK | OMAP4430_L4PER_STATDEP_MASK
-		| OMAP4430_L3INIT_STATDEP_MASK;
+		| OMAP4430_L4CFG_STATDEP_MASK | OMAP4430_L4WKUP_STATDEP_MASK
+		| OMAP4430_L4PER_STATDEP_MASK | OMAP4430_L3INIT_STATDEP_MASK;
 	cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM2_CORE_MOD,
 		OMAP4_CM_SDMA_STATICDEP_OFFSET);
 
-	/* C2C towards EMIF clockdomains */
+	/* C2C towards EMIF clockdomain */
 	cm_rmw_mod_reg_bits(OMAP4430_MEMIF_STATDEP_MASK, 0,
 		OMAP4430_CM2_CORE_MOD, OMAP4_CM_D2D_STATICDEP_OFFSET);
 
-	/* C2C_STATICDEP_RESTORE towards EMIF clockdomains */
+	/* C2C_RESTORE towards EMIF clockdomain */
 	cm_rmw_mod_reg_bits(OMAP4430_MEMIF_STATDEP_MASK, 0,
-			OMAP4430_CM2_RESTORE_MOD,
-			OMAP4_CM_D2D_STATICDEP_RESTORE_OFFSET);
+		OMAP4430_CM2_RESTORE_MOD,
+		OMAP4_CM_D2D_STATICDEP_RESTORE_OFFSET);
 
-	 /* SDMA_RESTORE towards EMIF, L3_1, L4_CFG,L4WKUP clockdomains */
+	/* SDMA_RESTORE towards EMIF, L3_1, L4_CFG, L4WKUP clockdomains */
 	reg = OMAP4430_MEMIF_STATDEP_MASK | OMAP4430_L3_1_STATDEP_MASK
 		| OMAP4430_L4CFG_STATDEP_MASK | OMAP4430_L4WKUP_STATDEP_MASK;
 	cm_rmw_mod_reg_bits(reg, 0, OMAP4430_CM2_RESTORE_MOD,
 		OMAP4_CM_SDMA_STATICDEP_RESTORE_OFFSET);
+
+	/* Configures MEMIF clockdomain back to HW_AUTO */
+	omap2_clkdm_allow_idle(l3_emif_clkdm);
+
+	/* Configures L3INIT clockdomain back to HW_AUTO */
+	omap2_clkdm_allow_idle(l3_init_clkdm);
+
+	/* Configures L4_PER clockdomain back to HW_AUTO */
+	omap2_clkdm_allow_idle(l4_per_clkdm);
 #endif
 };
 

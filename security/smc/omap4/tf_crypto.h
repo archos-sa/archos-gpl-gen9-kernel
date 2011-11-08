@@ -253,11 +253,10 @@ void tf_crypto_wait_for_ready_bit_infinitely(u32 *reg, u32 bit);
 
 void tf_crypto_enable_clock(uint32_t clock_paddr);
 void tf_crypto_disable_clock(uint32_t clock_paddr);
+u32 tf_crypto_turn_off_clocks(void);
 
 #define LOCK_HWA	true
 #define UNLOCK_HWA	false
-
-void tf_crypto_lock_hwa(u32 hwa_id, bool do_lock);
 
 /*---------------------------------------------------------------------------*/
 /*                               AES operations                              */
