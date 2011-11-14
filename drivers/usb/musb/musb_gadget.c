@@ -704,10 +704,12 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 		/*
 		 * Enable Mode 1 for RX transfers only for mass-storage
 		 * use-case, based on short_not_ok flag which is set only
-		 * from file_storage and f_mass_storage drivers
+		 * from file_storage and f_mass_storage drivers.
+		 * We also don't use Mode 1 on OMAP3 since Mode 1 utilizes
+		 * AUTOCLEAR and that isn't allowed due to errata i426.
 		 */
-
-		if (request->short_not_ok && len == musb_ep->packet_sz)
+		if (request->short_not_ok && len == musb_ep->packet_sz
+						&& !cpu_is_omap34xx())
 			use_mode_1 = 1;
 		else
 			use_mode_1 = 0;
@@ -786,6 +788,26 @@ static void rxstate(struct musb *musb, struct musb_request *req)
 
 				if (use_dma)
 					return;
+				else {
+					if (req->mapped) {
+                                                /* Unmap the buffer to use PIO */
+                                                dma_unmap_single(musb->controller,
+                                                        req->request.dma,
+                                                        req->request.length,
+                                                        req->tx
+                                                         ? DMA_TO_DEVICE
+                                                        : DMA_FROM_DEVICE);
+
+                                                req->request.dma = DMA_ADDR_INVALID;
+                                                req->mapped = 0;
+                                        }
+
+					/* Need to clear DMAENAB for the
+                                         * backup PIO mode transfer to work
+                                         */
+                                        csr &= ~MUSB_RXCSR_DMAENAB;
+                                        musb_writew(epio, MUSB_RXCSR, csr);
+                                }
 			}
 #endif	/* Mentor's DMA */
 

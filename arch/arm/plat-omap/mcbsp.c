@@ -675,17 +675,29 @@ EXPORT_SYMBOL(omap_mcbsp_get_dma_op_mode);
 
 static inline void omap34xx_mcbsp_request(struct omap_mcbsp *mcbsp)
 {
+	int idle_mode;
+
 	/*
 	 * Enable wakup behavior, smart idle and all wakeups
 	 * REVISIT: some wakeups may be unnecessary
 	 */
 	if (cpu_is_omap34xx() || cpu_is_omap44xx()) {
+		/*
+		 * OMAP3 Errata i649:  Do not allow McBSP2 when in slave mode
+		 * to idle to prevent frame corruption.
+		 */
+		if ((omap_rev() <= OMAP3630_REV_ES1_2) &&
+			(mcbsp->id == 2) &&
+			(mcbsp->interface_mode == OMAP_MCBSP_SLAVE))
+			idle_mode = HWMOD_IDLEMODE_NO;
+		else
+			idle_mode = HWMOD_IDLEMODE_SMART;
+
 
 		if (mcbsp->dma_op_mode == MCBSP_DMA_MODE_THRESHOLD) {
 			MCBSP_WRITE(mcbsp, WAKEUPEN, XRDYEN | RRDYEN);
 			omap_hwmod_enable_wakeup(mcbsp->oh[0]);
-			omap_hwmod_set_slave_idlemode(mcbsp->oh[0],
-						HWMOD_IDLEMODE_SMART);
+			omap_hwmod_set_slave_idlemode(mcbsp->oh[0], idle_mode);
 		} else {
 			omap_hwmod_disable_wakeup(mcbsp->oh[0]);
 			omap_hwmod_set_slave_idlemode(mcbsp->oh[0],
@@ -716,6 +728,71 @@ static inline void omap34xx_mcbsp_free(struct omap_mcbsp *mcbsp)
 #else
 static inline void omap34xx_mcbsp_request(struct omap_mcbsp *mcbsp) {}
 static inline void omap34xx_mcbsp_free(struct omap_mcbsp *mcbsp) {}
+#endif
+
+#ifdef CONFIG_ARCH_OMAP3
+/*
+ * OMAP36xx i539 errata work around.
+ */
+static struct clk *per_device_fclk;
+
+static int __init omap36xx_i539_errata_init(void)
+{
+	/*
+	 * Pick a device managed by the PER domain that uses the 32KHz clock
+	 * as its functional clock to minimize impact on power consumption.
+	 */
+	per_device_fclk = NULL;
+	if (cpu_is_omap3630()) {
+		per_device_fclk = omap_clk_get_by_name("gpio2_dbck");
+		if (per_device_fclk == NULL) {
+			printk(KERN_ERR "%s: Unable to find GPIO2 functional "
+				"clock. OMAP36xx i539 errata work around is "
+				"not enabled.\n",
+				__func__);
+			return -ENODEV;
+		}
+	}
+
+	return 0;
+}
+
+static void omap36xx_i539_errata_enable(int mcbsp_id)
+{
+	if (per_device_fclk) {
+		/* Work around is applicable only to McBSP modules in PER */
+		switch (mcbsp_id) {
+		case OMAP_MCBSP2:
+		case OMAP_MCBSP3:
+		case OMAP_MCBSP4:
+			clk_enable(per_device_fclk);
+			break;
+
+		default:
+			break;
+		}
+	}
+}
+
+static void omap36xx_i539_errata_disable(int mcbsp_id)
+{
+	if (per_device_fclk) {
+		switch (mcbsp_id) {
+		case OMAP_MCBSP2:
+		case OMAP_MCBSP3:
+		case OMAP_MCBSP4:
+			clk_disable(per_device_fclk);
+			break;
+
+		default:
+			break;
+		}
+	}
+}
+#else
+static inline int omap3_i539_errata_init(void) { return 0; }
+static inline void omap3_i539_errata_enable(int mcbsp_id)  {}
+static inline void omap3_i539_errata_disable(int mcbsp_id) {}
 #endif
 
 /*
@@ -776,6 +853,10 @@ int omap_mcbsp_request(unsigned int id)
 
 	pm_runtime_get_sync(mcbsp->dev);
 
+#ifdef CONFIG_ARCH_OMAP3
+	omap36xx_i539_errata_enable(id);
+#endif
+	
 	omap_mcbsp_restore_context(mcbsp);
 
 	/* Do procedure specific to omap34xx arch, if applicable */
@@ -852,6 +933,10 @@ void omap_mcbsp_free(unsigned int id)
 	/* Do procedure specific to omap34xx arch, if applicable */
 	omap34xx_mcbsp_free(mcbsp);
 
+#ifdef CONFIG_ARCH_OMAP3
+	omap36xx_i539_errata_disable(id);
+#endif
+	
 	pm_runtime_put_sync(mcbsp->dev);
 
 	if (mcbsp->io_type == OMAP_MCBSP_IRQ_IO) {
@@ -1832,6 +1917,10 @@ static struct platform_driver omap_mcbsp_driver = {
 
 int __init omap_mcbsp_init(void)
 {
+#ifdef CONFIG_ARCH_OMAP3
+	omap36xx_i539_errata_init();
+#endif
+
 	/* Register the McBSP driver */
 	return platform_driver_register(&omap_mcbsp_driver);
 }

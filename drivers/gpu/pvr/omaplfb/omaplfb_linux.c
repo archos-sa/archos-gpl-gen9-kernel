@@ -254,9 +254,11 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 	int r = 0;
 	struct omap_overlay_manager *manager;
 	struct dsscomp_setup_mgr_data *prime_data, *sec_data;
-
+	u32 display_ix;
+	
 	manager = omap_dss_get_overlay_manager(DISPLAY_CHANNEL);
-	omaplfb_dsscomp_get(&prime_data, DISPLAY_CHANNEL);
+	display_ix = dsscomp_get_display_index(manager);
+	omaplfb_dsscomp_get(&prime_data, display_ix);
 	if (!prime_data) {
 		ERROR_PRINTK("missing comp. data");
 		return;
@@ -277,7 +279,8 @@ static void OMAPLFBFlipDSSComp(OMAPLFB_DEVINFO *display_info,
 	clone_data = display_info->clone_data;
 	mgr_id_dst = clone_data->mgr_id_dst;
 	manager = omap_dss_get_overlay_manager(mgr_id_dst);
-	omaplfb_dsscomp_get(&sec_data, manager->id);
+	display_ix = dsscomp_get_display_index(manager);
+	omaplfb_dsscomp_get(&sec_data, display_ix);
 	if (!sec_data)
 		goto clone_unlock;
 
@@ -381,7 +384,7 @@ static void OMAPLFBFlipDSS(OMAPLFB_SWAPCHAIN *psSwapChain,
 		overlay_info.vaddr = framebuffer->screen_base + fb_offset;
 		overlay->set_overlay_info(overlay, &overlay_info);
 
-		if (manager) {
+		if (manager && manager->is_enabled(manager)) {
 			display = manager->device;
 			/* No display attached to this overlay, don't update */
 			if (!display ||

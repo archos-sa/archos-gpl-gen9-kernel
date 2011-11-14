@@ -110,9 +110,6 @@ int musb_notifier_call(struct notifier_block *nb,
 
 		musb_writel(musb->mregs, OTG_INTERFSEL, val);
 
-		val = __raw_readl(phymux_base +
-				USBA0_OTG_CE_PAD1_USBA0_OTG_DP);
-
 		if (data->interface_type == MUSB_INTERFACE_ULPI) {
 			hostmode = 1;
 			musb_enable_vbus(musb);

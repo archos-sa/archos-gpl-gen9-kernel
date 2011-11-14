@@ -574,6 +574,23 @@ struct archos_usb_gadget_config
 };
 #define ARCHOS_TAG_USB_GADGET	0x4e1e
 
+struct archos_temp_duty_cycle_config
+{
+	unsigned int nitro_interval;		// max. time we spend at OPP_NITRO
+	unsigned int cooling_interval;		// time we spend at cooling OPP
+	unsigned int nitro_rate;			// clock rate for OPP_NITRO
+	unsigned int cooling_rate;			// clock rate used for cooling
+	unsigned int extra_cooling_rate;	// clock rate used for extra cooling
+	bool	inhibit_charging;		/* during extra cooling turn off charging */
+
+	struct duty_cycle_temp_table {		// table of parameters per temperature range
+		int temperature;
+		int heating_budget;
+		bool cooling_needed;
+	} duty_cycle_temp_table[10];
+};
+#define ARCHOS_TAG_TEMP_DUTY_CYCLE	0x4e1f
+
 extern unsigned int hardware_rev;
 
 extern void usbsata_power(int on_off);

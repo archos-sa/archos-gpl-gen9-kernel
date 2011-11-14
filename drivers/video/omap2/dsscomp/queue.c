@@ -184,7 +184,7 @@ static inline struct dsscomp_data *validate(struct dsscomp_data *comp)
 
 
 /* get display index from manager */
-static u32 get_display_ix(struct omap_overlay_manager *mgr)
+u32 dsscomp_get_display_index(struct omap_overlay_manager *mgr)
 {
 	u32 i;
 
@@ -230,7 +230,7 @@ dsscomp_t dsscomp_new_sync_id(struct omap_overlay_manager *mgr, u32 sync_id,
 {
 	struct dsscomp_data *comp = NULL;
 	int r;
-	u32 display_ix = get_display_ix(mgr);
+	u32 display_ix = dsscomp_get_display_index(mgr);
 
 	/* check manager */
 	u32 ix = mgr ? mgr->id : cdev->num_mgrs;
@@ -657,11 +657,15 @@ void dsscomp_drop(dsscomp_t c)
 
 	list_for_each_entry_safe(o, o2, &c->ois, q) {
 		if (o->ovl.cfg.enabled && o->ovl.ba) {
+			if (o->ovl.cfg.color_mode == OMAP_DSS_COLOR_NV12) {
 #ifdef CONFIG_TILER_OMAP
-			tiler_set_buf_state(o->ovl.ba, TILBUF_FREE);
-#elif defined(CONFIG_VIDEO_CMA)
-			cma_set_buf_state(o->ovl.ba, CMABUF_FREE);
+				tiler_set_buf_state(o->ovl.ba, TILBUF_FREE);
 #endif
+			} else if (o->ovl.cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
+#ifdef CONFIG_VIDEO_CMA
+				cma_set_buf_state(o->ovl.ba, CMABUF_FREE, -1);
+#endif
+			}
 		}
 	}
 	list_for_each_entry_safe(o, o2, &c->ois, q)

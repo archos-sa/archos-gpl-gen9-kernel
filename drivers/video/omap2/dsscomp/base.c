@@ -166,9 +166,9 @@ int crop_to_rect(union rect *crop, union rect *win, union rect *vis,
 	return 0;
 }
 
-#define ISR_STATE_CLOSED 0
-#define ISR_STATE_OPENED 1
-#define ISR_STATE_CLOSING 2
+#define ISR_STATE_UNUSED 0
+#define ISR_STATE_CLOSED 1
+#define ISR_STATE_OPENED 2
 
 struct isr_ctx {
 	atomic_t state;
@@ -197,11 +197,10 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 	struct dss2_ovl_cfg *cfg;
 	struct isr_ctx *ctx;
 	union rect crop, win, vis;
-	unsigned long flags;
+	unsigned long flags = 0;
 	int ret = -EINVAL, locked = 0;
 	int c;
 	int isr_state;
-	u32 new_paddr;
 
 	/* check overlay number */
 	if (!oi || oi->cfg.ix >= omap_dss_get_num_overlays())
@@ -217,13 +216,10 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 
 	info.enabled = cfg->enabled;
 	if (!cfg->enabled) {
-		if (isr_state == ISR_STATE_CLOSING) {
-			/* overlay disabled, stop isr calls by avos */
-			atomic_set(&ctx->state, ISR_STATE_CLOSED);
+		if (isr_state == ISR_STATE_OPENED) {
 			spin_lock_irqsave(&isr_ctx_lock, flags);
 			locked = 1;
-			memset(&ctx->info.cfg, 0, sizeof(struct dss2_ovl_cfg));
-			ctx->info.valid = 0;
+			ctx->info.cfg.enabled = 0;
 		}
 		goto done;
 	}
@@ -246,7 +242,7 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 			ret = 0;
 			goto quit;
 		}		
-	} else if (isr_state == ISR_STATE_CLOSING || !oi->ba) {
+	} else if (isr_state == ISR_STATE_CLOSED && !oi->ba) {
 		/* avos don't put buffers anymore, disable overlay */ 
 		info.enabled = 0;
 		goto done;
@@ -358,11 +354,14 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 				goto quit;
 			info.rotation_type = OMAP_DSS_ROT_DMA;
 		} else {
+#if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
+			u32 new_paddr;
+#endif
 			info.mirror = cfg->mirror;
 			info.rotation = cfg->rotation;
 			info.rotation_type = OMAP_DSS_ROT_VRFB;
 #if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
-			if (!cma_set_vrfb_ctx(info.paddr, &new_paddr, info.width, info.height, cfg->rotation, cfg->mirror)) {
+			if (!cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height)) {
 				info.paddr = new_paddr;
 				info.screen_width = 2048;
 			}
@@ -443,7 +442,7 @@ int ovl_isr_stop(struct dsscomp_dev *cdev)
 	for (i = 0; i < cdev->isr.num_ovls; i++) {
 		struct isr_ctx *ctx = &isr_ctx[cdev->isr.ovl_ix[i]];
 
-		atomic_set(&ctx->state, ISR_STATE_CLOSING);
+		atomic_set(&ctx->state, ISR_STATE_CLOSED);
 		memset(&ctx->info.cfg, 0, sizeof(struct dss2_ovl_cfg));
 		ctx->info.valid = 0;
 		ctx->addr.ba = 0;
@@ -451,6 +450,7 @@ int ovl_isr_stop(struct dsscomp_dev *cdev)
 		ctx->addr.ilace = 0;
 	}
 	spin_unlock_irqrestore(&isr_ctx_lock, flags);
+
 	for (i = 0; i < cdev->isr.num_ovls; i++) {
 		struct omap_overlay *ovl;
 		struct omap_overlay_manager *mgr;
@@ -481,7 +481,6 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 	struct omap_overlay_manager *mgr = NULL;
 	int i;
 	int r;
-	u32 new_paddr;
 	/* check overlay number */
 	if (!buf)
 		return -EINVAL;
@@ -621,11 +620,14 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 					return -EINVAL;
 				info.rotation_type = OMAP_DSS_ROT_DMA;
 			} else {
+#if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
+				u32 new_paddr;
+#endif
 				info.mirror = cfg->mirror;
 				info.rotation = cfg->rotation;
 				info.rotation_type = OMAP_DSS_ROT_VRFB;
 #if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
-				if (!cma_set_vrfb_ctx(info.paddr, &new_paddr, info.width, info.height, cfg->rotation, cfg->mirror))
+				if (!cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height))
 				{
 					info.paddr = new_paddr;
 					info.screen_width = 2048;
@@ -644,6 +646,7 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 			info.field |= OMAP_FLAG_IBUF;
 		if (buf->ilace & OMAP_DSS_ILACE_SWAP)
 			info.field |= OMAP_FLAG_ISWAP;
+#ifdef CONFIG_OMAP2_DSS_HDMI
 		/*
 		 * Ignore OMAP_DSS_ILACE as there is no real support yet for
 		 * interlaced interleaved vs progressive buffers
@@ -653,6 +656,7 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 		    !strcmp(ovl->manager->device->name, "hdmi") &&
 		    is_hdmi_interlaced())
 			info.field |= OMAP_FLAG_IDEV;
+#endif
 
 		info.out_wb = 0;
 

@@ -44,10 +44,11 @@ extern int cma_unlock_buffer(int index);
 enum cmabuf_state {
 	CMABUF_FREE = 0,
 	CMABUF_BUSY = 1,
-	CMABUF_DMACOPY = 2
+	CMABUF_PREPROCESSING = 2
 };
 
-extern u32 cma_set_vrfb_ctx(u32 paddr, u32* new_addr, int width, int height, int rotation,  bool mirror);
-extern int cma_set_buf_state(int ba, enum cmabuf_state state);
+extern u32 cma_set_output_buffer(u32 paddr, u32* new_addr, int rotation,  bool mirror, u16 *in_width, u16 *in_height);
+extern int cma_set_buf_state(int ba, enum cmabuf_state state, int ovl_ix);
+extern int cma_set_ovl_win(int ovl_ix, int width, int height, int rotation);
 
 #endif

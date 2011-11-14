@@ -53,6 +53,7 @@ struct tick_sched {
 	ktime_t				idle_tick;
 	int				inidle;
 	int				tick_stopped;
+	int				tick_nohz_idle;
 	unsigned long			idle_jiffies;
 	unsigned long			idle_calls;
 	unsigned long			idle_sleeps;
@@ -124,6 +125,7 @@ static inline int tick_oneshot_mode_active(void) { return 0; }
 extern void tick_nohz_stop_sched_tick(int inidle);
 extern void tick_nohz_restart_sched_tick(void);
 extern ktime_t tick_nohz_get_sleep_length(void);
+extern void tick_nohz_disable(int tick_nohz);
 extern u64 get_cpu_idle_time_us(int cpu, u64 *last_update_time);
 extern u64 get_cpu_iowait_time_us(int cpu, u64 *last_update_time);
 # else
@@ -135,6 +137,7 @@ static inline ktime_t tick_nohz_get_sleep_length(void)
 
 	return len;
 }
+static inline void tick_nohz_disable(int) { }
 static inline u64 get_cpu_idle_time_us(int cpu, u64 *unused) { return -1; }
 static inline u64 get_cpu_iowait_time_us(int cpu, u64 *unused) { return -1; }
 # endif /* !NO_HZ */

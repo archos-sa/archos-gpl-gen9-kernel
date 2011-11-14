@@ -402,6 +402,78 @@ static struct snd_soc_ops archos_wl1271_ops = {
 
 /* ------------------------------------------------------------------------- */
 
+/* Archos board <--> HDMI ops --------------------------------------------- */
+
+static int archos_tda19989_startup(struct snd_pcm_substream *substream)
+{
+//	struct snd_pcm_runtime *runtime = substream->runtime;
+//	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+//	struct snd_soc_codec *codec = rtd->socdev->codec;
+
+	return 0;
+}
+
+static void archos_tda19989_shutdown(struct snd_pcm_substream *substream)
+{
+}
+
+static int archos_tda19989_hw_params(struct snd_pcm_substream *substream,
+	struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *codec_dai = rtd->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	int ret;
+
+	//printk(KERN_INFO "archos_tda19989_hw_params : freq = %d, channels = %d\n", params_rate(params), params_channels(params));
+	
+	/* Set codec DAI configuration */
+	ret = snd_soc_dai_set_fmt(codec_dai,
+				  SND_SOC_DAIFMT_I2S |
+				  SND_SOC_DAIFMT_NB_NF |
+				  SND_SOC_DAIFMT_CBS_CFS);
+	if (ret < 0) {
+		printk(KERN_ERR "can't set codec DAI fmt configuration\n");
+		return ret;
+	}
+
+	/* Set cpu DAI configuration */
+	ret = snd_soc_dai_set_fmt(cpu_dai,
+				  SND_SOC_DAIFMT_I2S |
+				  SND_SOC_DAIFMT_NB_NF |
+				  SND_SOC_DAIFMT_CBS_CFS);
+	if (ret < 0) {
+		printk(KERN_ERR "can't set cpu DAI configuration\n");
+		return ret;
+	}
+
+	/* Needed if the OMAP is Master */
+	/* Set MCBSP sysclock to functional (96 Mhz) */
+	ret = snd_soc_dai_set_sysclk(cpu_dai, OMAP_MCBSP_SYSCLK_CLKS_FCLK, 0,
+					    SND_SOC_CLOCK_IN);
+	if (ret < 0) {
+		pr_err(KERN_ERR "can't set cpu system clock\n");
+		return ret;
+	}
+
+	/* Set Clock Divisor: 32 * 68 =~ 44118 Hz (2 frames, 16 bits per frame) */
+	ret = snd_soc_dai_set_clkdiv(cpu_dai, OMAP_MCBSP_CLKGDV, 68);
+	if (ret < 0) {
+		pr_err(KERN_ERR "can't set SRG clock divider\n");
+		return ret;
+	}
+
+	return 0;
+}
+
+static struct snd_soc_ops archos_tda19989_ops = {
+	.startup = archos_tda19989_startup,
+	.hw_params = archos_tda19989_hw_params,
+	.shutdown = archos_tda19989_shutdown,
+};
+
+/* ------------------------------------------------------------------------- */
+
 static int archos_get_spk(struct snd_kcontrol *kcontrol,
 			struct snd_ctl_elem_value *ucontrol)
 {
@@ -594,6 +666,11 @@ static int archos_wl1271_init(struct snd_soc_pcm_runtime *rtd)
 	return 0;
 }
 
+static int archos_tda19989_init(struct snd_soc_pcm_runtime *rtd)
+{
+	return 0;
+}
+
 #ifdef CONFIG_PM
 int archos_wm8988_suspend_pre(struct platform_device *pdev, pm_message_t state)
 {
@@ -662,6 +739,26 @@ int archos_wl1271_resume_post(struct platform_device *pdev)
 	return 0;
 }
 
+int archos_tda19989_suspend_pre(struct platform_device *pdev, pm_message_t state)
+{
+	return 0;
+}
+
+int archos_tda19989_suspend_post(struct platform_device *pdev, pm_message_t state)
+{
+	return 0;
+}
+
+int archos_tda19989_resume_pre(struct platform_device *pdev)
+{
+	return 0;
+}
+
+int archos_tda19989_resume_post(struct platform_device *pdev)
+{
+	return 0;
+}
+
 #else
 
 #define archos_wm8988_suspend_pre NULL
@@ -672,6 +769,10 @@ int archos_wl1271_resume_post(struct platform_device *pdev)
 #define archos_wl1271_suspend_post NULL
 #define archos_wl1271_resume_pre NULL
 #define archos_wl1271_resume_post NULL
+#define archos_tda19989_suspend_pre NULL
+#define archos_tda19989_suspend_post NULL
+#define archos_tda19989_resume_pre NULL
+#define archos_tda19989_resume_post NULL
 
 #endif
 
@@ -683,7 +784,7 @@ int archos_wl1271_resume_post(struct platform_device *pdev)
 #define WL1271_FORMATS \
 	(SNDRV_PCM_FMTBIT_S8 | SNDRV_PCM_FMTBIT_S16_LE)
 
-static struct snd_soc_dai_driver archos_dai_driver[] = {
+static struct snd_soc_dai_driver archos_dai_wl1271_driver[] = {
 {
 	.name = "wl1271-hifi",
 	.playback = {
@@ -702,6 +803,35 @@ static struct snd_soc_dai_driver archos_dai_driver[] = {
 	},
 },
 };
+
+#define TDA19989_RATES \
+	(SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_11025 | SNDRV_PCM_RATE_16000 | \
+	SNDRV_PCM_RATE_22050 | SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 | \
+	SNDRV_PCM_RATE_48000)
+
+#define TDA19989_FORMATS \
+	(SNDRV_PCM_FMTBIT_S16_LE)
+
+static struct snd_soc_dai_driver archos_dai_tda19989_driver[] = {
+{
+	.name = "tda19989-hifi",
+	.playback = {
+		.stream_name = "Playback",
+		.channels_min = 1,
+		.channels_max = 2,
+		.rates = TDA19989_RATES,
+		.formats = TDA19989_FORMATS,
+	},
+	.capture = {
+		.stream_name = "Capture",
+		.channels_min = 1,
+		.channels_max = 2,
+		.rates = TDA19989_RATES,
+		.formats = TDA19989_FORMATS,
+	},
+},
+};
+
 /* Digital audio interface glue - connects codec <--> CPU */
 static struct snd_soc_dai_link archos_dai[] = {
 	{
@@ -722,6 +852,15 @@ static struct snd_soc_dai_link archos_dai[] = {
 	.no_codec = 1,
 	.init = archos_wl1271_init,
 	.ops = &archos_wl1271_ops,
+	},{
+	.name = "HDMI",
+	.stream_name = "TDA19989",
+	.cpu_dai_name = "omap-mcbsp-dai.4",	// McBSP4
+	.platform_name = "omap-pcm-audio",
+	.codec_dai_name = "tda19989-hifi",
+	.no_codec = 1,
+	.init = archos_tda19989_init,
+	.ops = &archos_tda19989_ops,
 	}
 };
 
@@ -751,8 +890,22 @@ static struct snd_soc_card snd_soc_archos_wl1271 = {
 	.resume_post = &archos_wl1271_resume_post,
 };
 
+/* Audio machine driver (HDMI) */
+static struct snd_soc_card snd_soc_archos_tda19989 = {
+	.name = "HDMI",
+	.long_name = "HDMI",
+	.owner = THIS_MODULE,
+	.dai_link = &archos_dai[2],
+	.num_links = 1,
+	.suspend_pre = &archos_tda19989_suspend_pre,
+	.suspend_post = &archos_tda19989_suspend_post,
+	.resume_pre = &archos_tda19989_resume_pre,
+	.resume_post = &archos_tda19989_resume_post,
+};
+
 static struct platform_device *archos_snd_device_wm8988;
 static struct platform_device *archos_snd_device_wl1271;
+static struct platform_device *archos_snd_device_tda19989;
 
 static int __devinit archos_soc_probe(struct platform_device *pdev)
 {
@@ -786,31 +939,52 @@ static int __devinit archos_soc_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err4;
 	}
+	archos_snd_device_tda19989 = platform_device_alloc("soc-audio", -3);
+	if (!archos_snd_device_tda19989) {
+		printk(KERN_ERR "archos_soc_init: Platform device allocation failed for HDMI\n");
+		ret = -ENOMEM;
+		goto err5;
+	}
 
-	ret = snd_soc_register_dais(&archos_snd_device_wl1271->dev, archos_dai_driver, ARRAY_SIZE(archos_dai_driver));
+	ret = snd_soc_register_dais(&archos_snd_device_wl1271->dev, archos_dai_wl1271_driver, ARRAY_SIZE(archos_dai_wl1271_driver));
 	if (IS_ERR_VALUE(ret)) {
 		pr_err("%s: unable to register SOC DAI, ret=%i\n",
 				__func__, ret);
-		goto err5;
+		goto err6;
+	}
+	ret = snd_soc_register_dais(&archos_snd_device_tda19989->dev, archos_dai_tda19989_driver, ARRAY_SIZE(archos_dai_tda19989_driver));
+	if (IS_ERR_VALUE(ret)) {
+		pr_err("%s: unable to register SOC DAI, ret=%i\n",
+				__func__, ret);
+		goto err7;
 	}
 
 	platform_set_drvdata(archos_snd_device_wm8988, &snd_soc_archos_wm8988);
 	platform_set_drvdata(archos_snd_device_wl1271, &snd_soc_archos_wl1271);
+	platform_set_drvdata(archos_snd_device_tda19989, &snd_soc_archos_tda19989);
 
 	ret = platform_device_add(archos_snd_device_wm8988);
 	if (ret)
-		goto err6;
+		goto err8;
 	ret = platform_device_add(archos_snd_device_wl1271);
 	if (ret)
-		goto err7;
+		goto err9;
+	ret = platform_device_add(archos_snd_device_tda19989);
+	if (ret)
+		goto err10;
 
 	msleep(2);
 
 	return 0;
 
-err7:
+err10:
+	platform_device_unregister(archos_snd_device_wl1271);
+err9:
 	platform_device_unregister(archos_snd_device_wm8988);
+err8:
+err7:
 err6:
+	platform_device_put(archos_snd_device_tda19989);
 err5:
 	platform_device_put(archos_snd_device_wl1271);
 err4:

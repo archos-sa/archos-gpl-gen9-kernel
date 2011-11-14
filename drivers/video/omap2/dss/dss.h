@@ -258,8 +258,8 @@ void save_all_ctx(void);
 void restore_all_ctx(void);
 
 /* display */
-int dss_suspend_all_devices(void);
-int dss_resume_all_devices(void);
+int dss_suspend_all_devices(int early_deep);
+int dss_resume_all_devices(int early_deep);
 void dss_disable_all_devices(void);
 
 void dss_init_device(struct platform_device *pdev,
@@ -324,6 +324,7 @@ enum dss_clk_source dss_get_lcd_clk_source(enum omap_dsi_index ix);
 
 void dss_set_venc_output(enum omap_dss_venc_type type);
 void dss_set_dac_pwrdn_bgz(bool enable);
+void dss_configure_venc(bool enable);
 
 unsigned long dss_get_dpll4_rate(void);
 int dss_calc_clock_rates(struct dss_clock_info *cinfo);

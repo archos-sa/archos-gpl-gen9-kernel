@@ -2326,7 +2326,7 @@ static struct isp_reg ispcsi2_reg_list[] = {
  **/
 void ispcsi2_save_context(struct device *dev)
 {
-	printk(KERN_DEBUG "Saving csi2 context\n");
+	//printk(KERN_DEBUG "Saving csi2 context\n");
 	isp_save_context(dev, ispcsi2_reg_list);
 }
 EXPORT_SYMBOL(ispcsi2_save_context);
@@ -2336,7 +2336,7 @@ EXPORT_SYMBOL(ispcsi2_save_context);
  **/
 void ispcsi2_restore_context(struct device *dev)
 {
-	printk(KERN_DEBUG "Restoring csi2 context\n");
+	//printk(KERN_DEBUG "Restoring csi2 context\n");
 	isp_restore_context(dev, ispcsi2_reg_list);
 }
 EXPORT_SYMBOL(ispcsi2_restore_context);

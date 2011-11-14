@@ -38,21 +38,6 @@ static char command_line[][COMMAND_LINE_SIZE] __initdata = {
 #else
 	[4] = "",
 #endif
-#ifdef CONFIG_CMDLINE_A70S2
-	[5] = CONFIG_CMDLINE_A70S2,
-#else
-	[5] = "",
-#endif
-#ifdef CONFIG_CMDLINE_A70H2
-	[6] = CONFIG_CMDLINE_A70H2,
-#else
-	[6] = "",
-#endif
-#ifdef CONFIG_CMDLINE_LUDO
-	[7] = CONFIG_CMDLINE_LUDO,
-#else
-	[7] = "",
-#endif
 };
 
 void __init fixup_archos(struct machine_desc *desc,
@@ -61,21 +46,14 @@ void __init fixup_archos(struct machine_desc *desc,
 	struct tag *t = tags;
 
 	if (machine_is_archos_a80s() || machine_is_archos_a101s() ||
-	    machine_is_archos_a101xs() || machine_is_omap_4430sdp()) {
+	    machine_is_omap_4430sdp()) {
 		*cmdline = command_line[0];
 	} else if (machine_is_omap4_panda()) {
 		*cmdline = command_line[2];
-	} else if (machine_is_archos_a80h() || machine_is_archos_a101h() ||
-		machine_is_archos_a120())  {
+	} else if (machine_is_archos_a80h() || machine_is_archos_a101h())  {
 		*cmdline = command_line[3];
 	} else if (machine_is_archos_a101it()) {
         	*cmdline = command_line[4];
-	} else if (machine_is_archos_a70s2()) {
-		*cmdline = command_line[5];
-	} else if (machine_is_archos_a70h2()) {
-		*cmdline = command_line[6];
-	} else if (machine_is_archos_ludo()) {
-		*cmdline = command_line[7];
 	} else {
 		printk("%s : NO COMMAND LINE FOUND!", __func__);
 		return;

@@ -196,8 +196,10 @@ static int sr_dev_init(struct omap_hwmod *oh, void *user)
 			sr_data->enable_on_init = true;
 		else
 			sr_data->enable_on_init = false;
+#ifdef CONFIG_ARCHOS_FORCE_OMAP4_SR_ENABLE_ON_INIT
 	} else if (cpu_is_omap44xx()) {
 		sr_data->enable_on_init = true;
+#endif
 	} else {
 		sr_data->enable_on_init = false;
 	}

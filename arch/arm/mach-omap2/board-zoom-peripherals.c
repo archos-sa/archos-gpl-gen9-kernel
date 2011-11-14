@@ -32,6 +32,11 @@
 #endif
 #include <linux/switch.h>
 
+#ifdef CONFIG_LEDS_OMAP_DISPLAY
+#include <linux/leds.h>
+#include <linux/leds-omap-display.h>
+#endif
+
 #ifdef CONFIG_PANEL_SIL9022
 #include <mach/sil9022.h>
 #endif
@@ -41,6 +46,7 @@
 #include "mux.h"
 #include "hsmmc.h"
 #include "twl4030.h"
+#include <linux/wakelock.h>
 
 #define OMAP_SYNAPTICS_GPIO	163
 
@@ -93,6 +99,32 @@ extern struct imx046_platform_data zoom2_lv8093_platform_data;
 #define LV8093_PWR_OFF		1
 #define LV8093_PWR_ON		(!LV8093_PWR_OFF)
 #endif
+
+#define BLUETOOTH_UART	UART2
+
+static struct wake_lock uart_lock;
+
+#ifdef CONFIG_LEDS_OMAP_DISPLAY
+/* PWM output/clock enable for LCD backlight*/
+#define REG_INTBR_GPBR1				0xc
+#define REG_INTBR_GPBR1_PWM1_OUT_EN		(0x1 << 3)
+#define REG_INTBR_GPBR1_PWM1_OUT_EN_MASK	(0x1 << 3)
+#define REG_INTBR_GPBR1_PWM1_CLK_EN		(0x1 << 1)
+#define REG_INTBR_GPBR1_PWM1_CLK_EN_MASK	(0x1 << 1)
+
+/* pin mux for LCD backlight*/
+#define REG_INTBR_PMBR1				0xd
+#define REG_INTBR_PMBR1_PWM1_PIN_EN		(0x3 << 4)
+#define REG_INTBR_PMBR1_PWM1_PIN_MASK		(0x3 << 4)
+
+#define MAX_CYCLES				0x7f
+#define MIN_CYCLES				75
+#define LCD_PANEL_BACKLIGHT_GPIO		(7 + OMAP_MAX_GPIO_LINES)
+#endif
+
+#define BLUETOOTH_UART	UART2
+
+static struct wake_lock uart_lock;
 
 /* Zoom2 has Qwerty keyboard*/
 static int board_keymap[] = {
@@ -233,8 +265,93 @@ static struct platform_device headset_switch_device = {
 	}
 };
 
+#ifdef CONFIG_LEDS_OMAP_DISPLAY
+/* omap3 led display */
+static void zoom_pwm_config(u8 brightness)
+{
+
+	u8 pwm_off = 0;
+
+	pwm_off = (MIN_CYCLES * (LED_FULL - brightness) +
+		   MAX_CYCLES * (brightness - LED_OFF)) /
+		(LED_FULL - LED_OFF);
+
+	pwm_off = clamp(pwm_off, (u8)MIN_CYCLES, (u8)MAX_CYCLES);
+
+	printk(KERN_DEBUG "PWM Duty cycles = %d\n", pwm_off);
+
+	/* start at 0 */
+	twl_i2c_write_u8(TWL4030_MODULE_PWM1, 0, 0);
+	twl_i2c_write_u8(TWL4030_MODULE_PWM1, pwm_off, 1);
+}
+
+static void zoom_pwm_enable(int enable)
+{
+	u8 gpbr1;
+
+	twl_i2c_read_u8(TWL4030_MODULE_INTBR, &gpbr1, REG_INTBR_GPBR1);
+	gpbr1 &= ~REG_INTBR_GPBR1_PWM1_OUT_EN_MASK;
+	gpbr1 |= (enable ? REG_INTBR_GPBR1_PWM1_OUT_EN : 0);
+	twl_i2c_write_u8(TWL4030_MODULE_INTBR, gpbr1, REG_INTBR_GPBR1);
+
+	twl_i2c_read_u8(TWL4030_MODULE_INTBR, &gpbr1, REG_INTBR_GPBR1);
+	gpbr1 &= ~REG_INTBR_GPBR1_PWM1_CLK_EN_MASK;
+	gpbr1 |= (enable ? REG_INTBR_GPBR1_PWM1_CLK_EN : 0);
+	twl_i2c_write_u8(TWL4030_MODULE_INTBR, gpbr1, REG_INTBR_GPBR1);
+}
+
+void omap_set_primary_brightness(u8 brightness)
+{
+	u8 pmbr1;
+	static int zoom_pwm1_config;
+	static int zoom_pwm1_output_enabled;
+
+	if (zoom_pwm1_config == 0) {
+		twl_i2c_read_u8(TWL4030_MODULE_INTBR, &pmbr1, REG_INTBR_PMBR1);
+
+		pmbr1 &= ~REG_INTBR_PMBR1_PWM1_PIN_MASK;
+		pmbr1 |=  REG_INTBR_PMBR1_PWM1_PIN_EN;
+		twl_i2c_write_u8(TWL4030_MODULE_INTBR, pmbr1, REG_INTBR_PMBR1);
+
+		zoom_pwm1_config = 1;
+	}
+
+	if (!brightness) {
+		zoom_pwm_enable(0);
+		zoom_pwm1_output_enabled = 0;
+		return;
+	}
+
+	zoom_pwm_config(brightness);
+	if (zoom_pwm1_output_enabled == 0) {
+		zoom_pwm_enable(1);
+		zoom_pwm1_output_enabled = 1;
+	}
+
+	printk(KERN_DEBUG "Zoom LCD Backlight brightness = %d\n", brightness);
+}
+
+static struct omap_disp_led_platform_data omap_disp_led_data = {
+	.flags = LEDS_CTRL_AS_ONE_DISPLAY,
+	.primary_display_set = omap_set_primary_brightness,
+	.secondary_display_set = NULL,
+};
+
+static struct platform_device omap_disp_led = {
+	.name   =       "display_led",
+	.id     =       -1,
+	.dev    = {
+		.platform_data = &omap_disp_led_data,
+	},
+};
+/* end led Display */
+#endif
+
 static struct platform_device *zoom_board_devices[] __initdata = {
 	&headset_switch_device,
+#ifdef CONFIG_LEDS_OMAP_DISPLAY
+	&omap_disp_led,
+#endif
 };
 
 static struct omap2_hsmmc_info mmc[] __initdata = {
@@ -323,6 +440,11 @@ static int zoom_twl_gpio_setup(struct device *dev,
 	return 0;
 }
 
+/* EXTMUTE callback function */
+static void zoom2_set_hs_extmute(int mute)
+{
+	gpio_set_value(ZOOM2_HEADSET_EXTMUTE_GPIO, mute);
+}
 
 static int zoom_batt_table[] = {
 /* 0 C*/
@@ -349,6 +471,7 @@ static struct twl4030_gpio_platform_data zoom_gpio_data = {
 	.irq_base	= TWL4030_GPIO_IRQ_BASE,
 	.irq_end	= TWL4030_GPIO_IRQ_END,
 	.setup		= zoom_twl_gpio_setup,
+	.debounce	= 0x04,
 };
 
 static struct twl4030_madc_platform_data zoom_madc_data = {
@@ -356,7 +479,10 @@ static struct twl4030_madc_platform_data zoom_madc_data = {
 };
 
 static struct twl4030_codec_audio_data zoom_audio_data = {
-	.audio_mclk = 26000000,
+	.audio_mclk	= 26000000,
+	.ramp_delay_value = 3, /* 161 ms */
+	.hs_extmute	= 1,
+	.set_hs_extmute	= zoom2_set_hs_extmute,
 };
 
 static struct twl4030_codec_data zoom_codec_data = {
@@ -491,6 +617,16 @@ static struct omap_musb_board_data musb_board_data = {
 	.power			= 100,
 };
 
+static void plat_hold_wakelock(void *up, int flag)
+{
+	struct uart_omap_port *up2 = (struct uart_omap_port *)up;
+
+	/* Specific wakelock for bluetooth usecases */
+	if ((up2->pdev->id == BLUETOOTH_UART)
+			&& ((flag == WAKELK_TX) || (flag == WAKELK_RX)))
+		wake_lock_timeout(&uart_lock, 2*HZ);
+}
+
 static struct omap_uart_port_info omap_serial_platform_data[] = {
 	{
 		.use_dma	= 0,
@@ -499,6 +635,7 @@ static struct omap_uart_port_info omap_serial_platform_data[] = {
 		.dma_rx_timeout = DEFAULT_RXDMA_TIMEOUT,
 		.idle_timeout	= DEFAULT_IDLE_TIMEOUT,
 		.flags		= 1,
+		.plat_hold_wakelock = NULL,
 	},
 	{
 		.use_dma	= 0,
@@ -507,6 +644,7 @@ static struct omap_uart_port_info omap_serial_platform_data[] = {
 		.dma_rx_timeout = DEFAULT_RXDMA_TIMEOUT,
 		.idle_timeout	= DEFAULT_IDLE_TIMEOUT,
 		.flags		= 1,
+		.plat_hold_wakelock = plat_hold_wakelock,
 	},
 	{
 		.use_dma	= 0,
@@ -515,6 +653,7 @@ static struct omap_uart_port_info omap_serial_platform_data[] = {
 		.dma_rx_timeout = DEFAULT_RXDMA_TIMEOUT,
 		.idle_timeout	= DEFAULT_IDLE_TIMEOUT,
 		.flags		= 1,
+		.plat_hold_wakelock = NULL,
 	},
 	{
 		.use_dma	= 0,
@@ -523,6 +662,7 @@ static struct omap_uart_port_info omap_serial_platform_data[] = {
 		.dma_rx_timeout = DEFAULT_RXDMA_TIMEOUT,
 		.idle_timeout	= DEFAULT_IDLE_TIMEOUT,
 		.flags		= 1,
+		.plat_hold_wakelock = NULL,
 	},
 	{
 		.flags		= 0
@@ -538,6 +678,8 @@ static void enable_board_wakeup_source(void)
 
 void __init zoom_peripherals_init(void)
 {
+	wake_lock_init(&uart_lock, WAKE_LOCK_SUSPEND, "uart_wake_lock");
+
 	twl4030_get_scripts(&zoom_t2scripts_data);
 	omap_i2c_init();
 	platform_add_devices(zoom_board_devices,

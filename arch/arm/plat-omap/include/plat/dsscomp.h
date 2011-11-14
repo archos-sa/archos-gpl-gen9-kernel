@@ -48,5 +48,7 @@ int dsscomp_wait(dsscomp_t comp, enum dsscomp_wait_phase phase, int timeout);
 void dsscomp_drop(dsscomp_t c);
 void dsscomp_drop_unlocked(dsscomp_t c);
 void dsscomp_release_active_comps(void);
+/* retrieve display index from overlay manager */
+u32 dsscomp_get_display_index(struct omap_overlay_manager *mgr);
 
 #endif

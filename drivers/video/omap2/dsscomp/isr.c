@@ -31,6 +31,7 @@
 #include <plat/dsscomp.h>
 #include "dsscomp.h"
 #include <mach/tiler.h>
+#include <media/cma.h>
 
 int debug_isr;
 module_param(debug_isr, int, 0644);
@@ -86,13 +87,17 @@ static void dsscomp_isr(void *data, u32 mask)
 			list_add_tail(&next->node, &done_queue);
 
 		} else if( time_before( (unsigned long)next->b.ts, time_next ) ) {
+			int ret;
+
 			if(debug_isr) 
 				dev_info(DEV(cdev), "SHOW[%2d]  %8u < %8lu  %08X\r\n", next->b.id, next->b.ts, time_next, (int)next->b.address );
 			// show, take next pending frame from queue
 			list_del(&next->node);
 			
 			// and show it
-			set_dss_ovl_addr(&next->b);
+			ret = set_dss_ovl_addr(&next->b);
+			if (ret)
+				printk("dsscomp_isr: set_dss_ovl_addr failed: %d\n", ret);
 			
 			if (current_frame != NULL) {
 				list_add_tail(&current_frame->node, &done_queue);
@@ -196,8 +201,6 @@ long isr_resume( struct dsscomp_dev *cdev )
 
 long isr_suspend( struct dsscomp_dev *cdev )
 {
-	u32 mask;
-
 	if (!cdev->isr.registered)
 		return 0;
 	cdev->isr.registered = 0;
@@ -246,6 +249,10 @@ long isr_put( struct dsscomp_dev *cdev, void __user *ptr )
 		kfree(buf);
 		return -EFAULT;
 	}
+
+#if defined(CONFIG_VIDEO_CMA)
+	cma_set_buf_state(buf->b.ba, CMABUF_BUSY, cdev->isr.ovl_ix[0]);
+#endif
 
 	spin_lock_irqsave( &frame_queue_lock, flags );
 	list_add_tail(&buf->node, &pending_queue);

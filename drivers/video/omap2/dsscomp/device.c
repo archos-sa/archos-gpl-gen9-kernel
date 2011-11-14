@@ -113,16 +113,22 @@ void dsscomp_prepdata(struct dsscomp_setup_mgr_data *d)
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
 		u32 addr = (u32) oi->address;
-		if (oi->cfg.enabled) {
+#ifdef CONFIG_VIDEO_CMA
+		if (oi->cfg.enabled && oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY)
+			cma_set_ovl_win(oi->cfg.ix, oi->cfg.win.w, oi->cfg.win.h, oi->cfg.rotation);
+#endif
+		if (oi->cfg.enabled && addr) {
 			/* convert addresses to user space */
 			oi->ba = hwc_virt_to_phys(addr);
-			if ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY)) {
+			if (oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) {
 				oi->uv = hwc_virt_to_phys(addr +
 					oi->cfg.height * oi->cfg.stride);
 #ifdef CONFIG_TILER_OMAP
 				tiler_set_buf_state(oi->ba, TILBUF_BUSY);
-#elif defined(CONFIG_VIDEO_CMA)
-				cma_set_buf_state(oi->ba, CMABUF_BUSY);
+#endif
+			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
+#ifdef CONFIG_VIDEO_CMA
+				cma_set_buf_state(oi->ba, CMABUF_BUSY, oi->cfg.ix);
 #endif
 			}
 		}
@@ -135,14 +141,17 @@ void dsscomp_prepdata_drop(struct dsscomp_setup_mgr_data *d)
 	int i;
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
-		if (oi->cfg.enabled)
-			if ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY)) {
+		if (oi->cfg.enabled && oi->ba) {
+			if (oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) {
 #ifdef CONFIG_TILER_OMAP
 				tiler_set_buf_state(oi->ba, TILBUF_FREE);
-#elif defined(CONFIG_VIDEO_CMA)
-				cma_set_buf_state(oi->ba, CMABUF_FREE);
+#endif
+			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
+#ifdef CONFIG_VIDEO_CMA
+				cma_set_buf_state(oi->ba, CMABUF_FREE, -1);
 #endif
 			}
+		}
 	}
 }
 EXPORT_SYMBOL(dsscomp_prepdata_drop);
@@ -177,13 +186,16 @@ dsscomp_t dsscomp_createcomp(struct omap_overlay_manager *mgr,
 cleanup:
 	for (i = 0; i < d->num_ovls; i++) {
 		struct dss2_ovl_info *oi = d->ovls + i;
-		if (oi->cfg.enabled &&
-		    ((oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) || (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY))) {
+		if (oi->cfg.enabled && oi->ba) {
+			if (oi->cfg.color_mode == OMAP_DSS_COLOR_NV12) {
 #ifdef CONFIG_TILER_OMAP
-			tiler_set_buf_state(oi->ba, TILBUF_FREE);
-#elif defined(CONFIG_VIDEO_CMA)
-			cma_set_buf_state(oi->ba, CMABUF_FREE);
+				tiler_set_buf_state(oi->ba, TILBUF_FREE);
 #endif
+			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
+#ifdef CONFIG_VIDEO_CMA
+				cma_set_buf_state(oi->ba, CMABUF_FREE, -1);
+#endif
+			}
 		}
 	}
 	return NULL;
@@ -222,9 +234,10 @@ static long query_display(struct dsscomp_dev *cdev,
 	dis->s3d_info = dev->panel.s3d_info;
 	dis->state = dev->state;
 	dis->timings = dev->panel.timings;
+#ifdef CONFIG_OMAP2_DSS_HDMI
 	if (!strcmp(dev->name, "hdmi"))
 		get_hdmi_mode_code(&dis->timings, &dis->mode, &dis->code);
-
+#endif
 	/* find all overlays available for/owned by this display */
 	for (i = 0; i < cdev->num_ovls && dis->enabled; i++) {
 		if (cdev->ovls[i]->manager == mgr)
@@ -238,8 +251,10 @@ static long query_display(struct dsscomp_dev *cdev,
 	if (mgr) {
 		dis->mgr.alpha_blending = mgr->info.alpha_enabled;
 		dis->mgr.default_color = mgr->info.default_color;
+#ifdef CONFIG_OMAP2_DSS_HDMI
 		dis->mgr.interlaced = !strcmp(dev->name, "hdmi") &&
 							is_hdmi_interlaced();
+#endif
 		dis->mgr.trans_enabled = mgr->info.trans_enabled;
 		dis->mgr.trans_key = mgr->info.trans_key;
 		dis->mgr.trans_key_type = mgr->info.trans_key_type;

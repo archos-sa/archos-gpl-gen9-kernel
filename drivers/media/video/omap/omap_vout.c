@@ -39,6 +39,9 @@
 #include <linux/irq.h>
 #include <linux/videodev2.h>
 #include <linux/slab.h>
+#include <linux/wait.h>
+#include <linux/delay.h>
+#include <linux/tick.h>
 
 #ifndef CONFIG_ARCH_OMAP4
 #include <media/videobuf-dma-sg.h>
@@ -114,6 +117,7 @@ enum dma_channel_state {
 (cpu_is_omap3630() ? 200000 : 166000) : 0)
 
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
+extern void tick_nohz_disable(int nohz);
 struct isp_node pipe;
 static int vrfb_configured;
 #endif
@@ -1907,9 +1911,9 @@ static int omap_vout_buffer_prepare(struct videobuf_queue *q,
 		}
 	}
 #endif
-
 	omap_start_dma(tx->dma_ch);
-	interruptible_sleep_on_timeout(&tx->wait, VRFB_TX_TIMEOUT);
+	wait_event_interruptible_timeout(tx->wait, tx->tx_status != 0,
+		VRFB_TX_TIMEOUT);
 
 	if (tx->tx_status == 0) {
 		omap_stop_dma(tx->dma_ch);
@@ -3190,6 +3194,12 @@ static int vidioc_streamon(struct file *file, void *fh, enum v4l2_buf_type i)
 			pdata->set_min_bus_tput(
 				((vout->vid_dev)->v4l2_dev).dev ,
 					OCP_INITIATOR_AGENT, 166 * 1000 * 4);
+        }
+
+		if(!cpu_is_omap44xx()) {
+			tick_nohz_disable(1);
+			/* Wait for 2 vsyncs before start processing buffers */
+			 mdelay(32);
 		}
 	}
 #endif
@@ -3287,6 +3297,8 @@ static int do_streamoff(struct file *file, void *fh, enum v4l2_buf_type i, int k
 		pdata->set_min_bus_tput(
 			((vout->vid_dev)->v4l2_dev).dev,
 				OCP_INITIATOR_AGENT, 0);
+
+	tick_nohz_disable(0);
 #endif
 
 finish:
@@ -3346,6 +3358,15 @@ static int vidioc_s_fbuf(struct file *file, void *fh,
 	if ((a->flags & V4L2_FBUF_FLAG_SRC_CHROMAKEY) &&
 			(a->flags & V4L2_FBUF_FLAG_CHROMAKEY))
 		return -EINVAL;
+
+	/* OMAP DSS Doesn't support the Destination color key
+	   and alpha blending together */
+	if ((a->flags & V4L2_FBUF_FLAG_CHROMAKEY) &&
+			(a->flags & V4L2_FBUF_FLAG_LOCAL_ALPHA)) {
+		printk(KERN_ERR "Invalid request - "
+			"Color key & Local Alpha are requested together.\n");
+		return -EINVAL;
+	}
 
 	if ((a->flags & V4L2_FBUF_FLAG_SRC_CHROMAKEY)) {
 		vout->fbuf.flags |= V4L2_FBUF_FLAG_SRC_CHROMAKEY;
@@ -3411,9 +3432,11 @@ static int vidioc_g_fbuf(struct file *file, void *fh,
 	if (ovl->manager && ovl->manager->get_manager_info) {
 		ovl->manager->get_manager_info(ovl->manager, &info);
 		if (info.trans_key_type == OMAP_DSS_COLOR_KEY_VID_SRC)
-			a->flags |= V4L2_FBUF_FLAG_SRC_CHROMAKEY;
+			if (info.trans_enabled)
+				a->flags |= V4L2_FBUF_FLAG_SRC_CHROMAKEY;
 		if (info.trans_key_type == OMAP_DSS_COLOR_KEY_GFX_DST)
-			a->flags |= V4L2_FBUF_FLAG_CHROMAKEY;
+			if (info.trans_enabled)
+				a->flags |= V4L2_FBUF_FLAG_CHROMAKEY;
 	}
 	if (ovl->manager && ovl->manager->get_manager_info) {
 		ovl->manager->get_manager_info(ovl->manager, &info);
@@ -3737,7 +3760,7 @@ static ssize_t isprsz_mode_store(struct device *dev,
 	int ret = 0;
 
 	if (vout->isprsz & ISPRSZ_CONFIGURED) {
-		printk(KERN_ERR, "<%s> could not change isprsz_mode. "
+		printk(KERN_ERR "<%s> could not change isprsz_mode. "
 				"try after isprsz released.\n", __func__);
 		ret = -EBUSY;
 		goto exit;

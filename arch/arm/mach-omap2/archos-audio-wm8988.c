@@ -166,14 +166,10 @@ static int _get_clkout_rate(void)
 
 static void _suspend(void)
 {
-	if (audio_gpio.headphone_plugged != -1)
-		gpio_set_debounce(audio_gpio.headphone_plugged,0);	
 }
 
 static void _resume(void)
 {
-	if (audio_gpio.headphone_plugged != -1)
-		gpio_set_debounce(audio_gpio.headphone_plugged,1);	
 }
 
 static struct audio_wm8988_device_config audio_wm8988_device_io = {

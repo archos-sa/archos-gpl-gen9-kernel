@@ -526,8 +526,9 @@ struct twl4030_bci_platform_data {
 
 	unsigned int max_bat_voltagemV;
 	unsigned int low_bat_voltagemV;
-
+#ifdef CONFIG_MACH_ARCHOS
 	bool usb_is_dc;
+#endif
 };
 
 /* TWL4030_GPIO_MAX (18) GPIOs, with interrupts */

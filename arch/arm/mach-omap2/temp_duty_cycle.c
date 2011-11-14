@@ -32,6 +32,8 @@
 #include <plat/omap_device.h>
 #include <plat/temperature_sensor.h>
 
+#include <mach/board-archos.h>
+
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Module to control max opp duty cycle based on on-die sensor temperature");
 
@@ -46,16 +48,24 @@ enum archos_omap4_duty_state {
 struct archos_omap4_duty_cycle {
 	struct platform_device *pdev;
 	struct device *dev;
-	unsigned int nitro_interval;		// max. time we spend at OPP_NITRO
-	unsigned int cooling_interval;		// time we spend at cooling OPP
-	unsigned int nitro_rate;			// clock rate for OPP_NITRO
-	unsigned int cooling_rate;			// clock rate used for cooling
-	unsigned int extra_cooling_rate;	// clock rate used for extra cooling
-
-	bool cooling_needed;				// do we need to cool or can we stay at OPP_NITRO for longer
-	bool extra_cooling_needed;			// do we need to cool even more
-	int heating_budget;					// time in ms we can stay at OPP_NITRO during this interval
+	
+	/* configuration data */
+	unsigned int nitro_interval;		/* max. time we spend at OPP_NITRO */
+	unsigned int cooling_interval;		/* time we spend at cooling OPP */
+	unsigned int nitro_rate;		/* clock rate for OPP_NITRO */
+	unsigned int cooling_rate;		/* clock rate used for cooling */
+	unsigned int extra_cooling_rate;	/* clock rate used for extra cooling */
+	bool	inhibit_charging;		/* during extra cooling turn off charging */
+	
+	struct duty_cycle_temp_table		/* table of parameters per temperature range */
+		duty_cycle_temp_table[10];
+	
+	/* heating/cooling control */
+	bool cooling_needed;			/* do we need to cool or can we stay at OPP_NITRO for longer */
+	bool extra_cooling_needed;		/* do we need to cool even more */
+	int heating_budget;			/* time in ms we can stay at OPP_NITRO during this interval */
 	struct delayed_work work;
+	struct delayed_work charge_inhibit_work;
 
 	enum archos_omap4_duty_state state;
 	struct mutex mutex_duty;
@@ -66,46 +76,28 @@ struct archos_omap4_duty_cycle {
 static int archos_omap4_compute_heat_budget( struct archos_omap4_duty_cycle *odc )
 {
 	int temperature = omap4430_current_on_die_temperature();
-	
-	/*
-	 * we have the following from TI:
-	 *    time constant is around 3s between on-die-sensor and hot-spot or PCB,
-	 *      thus after about 6s, heating/cooling should be finished
-	 *
-	 * below 75 deg. we allow OPP_TNT
-	 * between 75 deg. and 80 deg. we allow 50%-16% of nitro_interval followed by 6s (cooling interva) at 1GHz
-	 * between 80 deg. and 85 deg. we disallow OPP_NITRO
-	 * above 85 deg. we even do not allow 1GHz
-	 */
+	int i;
 
+	int heating_budget = 0;
 	odc->cooling_needed = false;
 	odc->extra_cooling_needed = false;
-
-	if (temperature < 75000 ) {
-		odc->heating_budget = odc->nitro_interval;
-	} else if (temperature < 77000 ) {
-		odc->heating_budget = odc->nitro_interval;
-		odc->cooling_needed = true;
-	} else if (temperature < 78000 ) {
-		odc->heating_budget = odc->nitro_interval/2;
-		odc->cooling_needed = true;
-	} else if (temperature < 79000 ) {
-		odc->heating_budget = odc->nitro_interval/3;
-		odc->cooling_needed = true;
-	} else if (temperature < 80000 ) {
-		odc->heating_budget = odc->nitro_interval/6;
-		odc->cooling_needed = true;
-	} else if (temperature < 85000 ) {
-		odc->heating_budget = 0;
-		odc->cooling_needed = true;
-	} else {
-		odc->heating_budget = 0;
-		odc->cooling_needed = true;
-		odc->extra_cooling_needed = true;
+	
+	for(i=0; i<10; i++) {
+		if ( !odc->duty_cycle_temp_table[i].temperature ) {
+			odc->cooling_needed = true;
+			odc->extra_cooling_needed = true;
+			break;
+		}
+		if (temperature < odc->duty_cycle_temp_table[i].temperature) {
+			heating_budget = odc->duty_cycle_temp_table[i].heating_budget;
+			odc->cooling_needed = odc->duty_cycle_temp_table[i].cooling_needed;
+			break;
+		}
 	}
+
 	pr_debug("temperature %d heating_budget %d cooling needed %d extra_cooling needed %d\n", 
-			 temperature, odc->heating_budget, odc->cooling_needed, odc->extra_cooling_needed);
-	return odc->cooling_needed;
+			 temperature, heating_budget, odc->cooling_needed, odc->extra_cooling_needed);
+	return heating_budget;
 }
 
 static int omap4_check_cpufreq_high( struct archos_omap4_duty_cycle *odc, int cur_freq )
@@ -130,6 +122,7 @@ static void archos_omap4_duty_enter_normal(struct archos_omap4_duty_cycle *odc)
 		policy->user_policy.max = odc->nitro_rate;
 	}
 	cpufreq_update_policy(policy->cpu);
+	schedule_delayed_work(&odc->work, msecs_to_jiffies(30000)); /* keep alive */
 }
 
 static void archos_omap4_duty_enter_cooling(struct archos_omap4_duty_cycle *odc, unsigned int next_max,
@@ -146,6 +139,8 @@ static void archos_omap4_duty_enter_cooling(struct archos_omap4_duty_cycle *odc,
 
 	cancel_delayed_work(&odc->work);
 	schedule_delayed_work(&odc->work, msecs_to_jiffies(odc->cooling_interval));
+	if ( odc->extra_cooling_needed )
+		schedule_delayed_work(&odc->charge_inhibit_work, 0);
 }
 
 static void archos_omap4_duty_enter_heating(struct archos_omap4_duty_cycle *odc)
@@ -154,7 +149,7 @@ static void archos_omap4_duty_enter_heating(struct archos_omap4_duty_cycle *odc)
 	odc->state = OMAP4_DUTY_HEATING;
 
 	if (!odc->cooling_needed || !odc->heating_budget) {
-		archos_omap4_compute_heat_budget(odc);
+		odc->heating_budget = archos_omap4_compute_heat_budget(odc);
 	}
 	
 	cancel_delayed_work(&odc->work);
@@ -171,6 +166,12 @@ static void archos_omap4_duty_wg(struct work_struct *work)
 
 	switch(odc->state) {
 		case OMAP4_DUTY_NORMAL:
+			/* make sure we stay at sane temperature, check here... */
+			if ( !archos_omap4_compute_heat_budget(odc) && 
+			      odc->extra_cooling_needed )
+				archos_omap4_duty_enter_cooling(odc, odc->extra_cooling_rate, OMAP4_DUTY_COOLING);
+			else
+				schedule_delayed_work(&odc->work, msecs_to_jiffies(30000)); /* keep alive... */
 			break;
 		case OMAP4_DUTY_ENTER_COOLING:
 		case OMAP4_DUTY_HEATING:
@@ -189,12 +190,43 @@ static void archos_omap4_duty_wg(struct work_struct *work)
 			}
 			break;
 		case OMAP4_DUTY_COOLING:
+			if ( !odc->heating_budget ) {
+				/* check if we have to keep reduced speed */
+				if ( !archos_omap4_compute_heat_budget(odc)) {
+					if (odc->extra_cooling_needed)
+						archos_omap4_duty_enter_cooling(odc, odc->extra_cooling_rate, OMAP4_DUTY_COOLING);
+					else if (odc->cooling_needed)
+						archos_omap4_duty_enter_cooling(odc, odc->cooling_rate, OMAP4_DUTY_COOLING);
+					break;
+				}
+			}
 			archos_omap4_duty_enter_normal(odc);
 			break;
 	}
 	mutex_unlock(&odc->mutex_duty);
 }
 
+extern void twl6030_inhibit_usb_charging( int stop_resume );
+
+static void archos_omap4_charge_inhibit_wg(struct work_struct *work)
+{
+	struct archos_omap4_duty_cycle *odc = container_of(work, struct archos_omap4_duty_cycle, charge_inhibit_work.work);
+
+	if (!odc->inhibit_charging)
+		return;
+	pr_debug("archos_omap4_charge_inhibit_wg %d extra_cooling_needed %d\n", odc->state, odc->extra_cooling_needed);
+
+	if ( odc->extra_cooling_needed ) {
+		pr_debug("inhibit charging\n");
+		twl6030_inhibit_usb_charging(1);
+		cancel_delayed_work(&odc->charge_inhibit_work);
+		/* check again in 60s */
+		schedule_delayed_work(&odc->charge_inhibit_work, msecs_to_jiffies(60000));
+	} else {
+		pr_debug("allow charging\n");
+		twl6030_inhibit_usb_charging(0);
+	}
+}
 
 static int archos_omap4_duty_frequency_change(struct notifier_block *nb,
 					unsigned long event, void *data)
@@ -237,6 +269,7 @@ done:
 static int __init archos_omap4_duty_probe(struct platform_device *pdev)
 {
 	struct archos_omap4_duty_cycle	*odc;
+	const struct archos_temp_duty_cycle_config *temp_dc_cfg;
 	int err = 0;
 
 	odc = kzalloc(sizeof *odc, GFP_KERNEL);
@@ -245,16 +278,56 @@ static int __init archos_omap4_duty_probe(struct platform_device *pdev)
 
 	/* Data initialization */
 	odc->dev = &pdev->dev;
-	odc->nitro_interval = 6000;
-	odc->cooling_interval = 6000; /* 2*tau */
-	odc->nitro_rate = 1200000;
-	odc->cooling_rate = 1008000;
-	odc->extra_cooling_rate = 800000;
 	odc->cooling_needed = false;
 	odc->state = OMAP4_DUTY_NORMAL;
 
-	INIT_DELAYED_WORK(&odc->work, archos_omap4_duty_wg);
+	temp_dc_cfg = omap_get_config(ARCHOS_TAG_TEMP_DUTY_CYCLE,
+			struct archos_temp_duty_cycle_config);
+	if (NULL != temp_dc_cfg) {
+		pr_debug("using values from board file\n");
+		odc->nitro_interval     = temp_dc_cfg->nitro_interval;
+		odc->cooling_interval   = temp_dc_cfg->cooling_interval;
+		odc->nitro_rate         = temp_dc_cfg->nitro_rate;
+		odc->cooling_rate       = temp_dc_cfg->cooling_rate;
+		odc->extra_cooling_rate = temp_dc_cfg->extra_cooling_rate;
+		odc->inhibit_charging	= temp_dc_cfg->inhibit_charging;
+		memcpy( odc->duty_cycle_temp_table, temp_dc_cfg->duty_cycle_temp_table, 
+				sizeof(odc->duty_cycle_temp_table));
+	} else {	
+		pr_warn("No archos_temp_duty_cycle_config found in board file! Using defaults\n");
+	
+		odc->nitro_interval = 6000;
+		odc->cooling_interval = 6000; /* 2*tau */
+		odc->nitro_rate = 1200000;
+		odc->cooling_rate = 1008000;
+		odc->extra_cooling_rate = 800000;
+		odc->inhibit_charging = false;
+		
+		/*
+		* we have the following from TI:
+		*    time constant is around 3s between on-die-sensor and hot-spot or PCB,
+		*      thus after about 6s, heating/cooling should be finished
+		*
+		* below 75 deg. we allow OPP_TNT
+		* between 75 deg. and 80 deg. we allow 50%-16% of nitro_interval followed by 6s (cooling interva) at 1GHz
+		* between 80 deg. and 85 deg. we disallow OPP_NITRO
+		* above 85 deg. we even do not allow 1GHz
+		*/
 
+		memcpy( odc->duty_cycle_temp_table, (struct duty_cycle_temp_table[]){
+			{ .temperature=75000, .heating_budget=6000,   .cooling_needed=false, },
+			{ .temperature=77000, .heating_budget=6000,   .cooling_needed=true,  },
+			{ .temperature=78000, .heating_budget=6000/2, .cooling_needed=true,  },
+			{ .temperature=79000, .heating_budget=6000/3, .cooling_needed=true,  },
+			{ .temperature=80000, .heating_budget=6000/6, .cooling_needed=true,  },
+			{ .temperature=85000, .heating_budget=0,      .cooling_needed=true,  },
+			{ 0 }
+		}, sizeof(odc->duty_cycle_temp_table));
+	}
+	
+	INIT_DELAYED_WORK(&odc->work, archos_omap4_duty_wg);
+	INIT_DELAYED_WORK(&odc->charge_inhibit_work, archos_omap4_charge_inhibit_wg);
+	
 	mutex_init(&odc->mutex_duty);
 	
 	odc->heating_budget = 0;
@@ -268,7 +341,10 @@ static int __init archos_omap4_duty_probe(struct platform_device *pdev)
 		err = -EINVAL;
 		goto exit;
 	}
-
+	
+	/* start work queue initially */
+	schedule_delayed_work(&odc->work, msecs_to_jiffies(30000));
+	
 	return 0;
 exit:
 	kfree(odc);
@@ -283,6 +359,7 @@ static int __exit archos_omap4_duty_remove(struct platform_device *pdev)
 					CPUFREQ_TRANSITION_NOTIFIER);
 
 	cancel_delayed_work_sync(&odc->work);
+	cancel_delayed_work_sync(&odc->charge_inhibit_work);
 
 	kfree(odc);
 

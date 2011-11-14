@@ -93,7 +93,7 @@ static int omap_target(struct cpufreq_policy *policy,
 		       unsigned int target_freq,
 		       unsigned int relation)
 {
-#if defined(CONFIG_ARCH_OMAP1) || defined(CONFIG_ARCH_OMAP4)
+#if defined(CONFIG_ARCH_OMAP1)
 	struct cpufreq_freqs freqs;
 #endif
 #if defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_ARCH_OMAP4)
@@ -101,6 +101,12 @@ static int omap_target(struct cpufreq_policy *policy,
 	unsigned long freq;
 	struct device *mpu_dev = omap2_get_mpuss_device();
 	int ret = 0;
+#ifdef CONFIG_SMP
+	struct cpufreq_freqs freqs;
+#endif
+
+	if (omap_get_vdd1_lock())
+		return ret;
 #endif
 
 #ifdef CONFIG_SMP

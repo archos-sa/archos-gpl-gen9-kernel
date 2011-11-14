@@ -252,6 +252,11 @@ enum omap_dss_display_state {
 	OMAP_DSS_DISPLAY_TRANSITION,
 };
 
+enum omap_dss_display_suspend_mode {
+	OMAP_DSS_DISPLAY_EARLY = 0,
+	OMAP_DSS_DISPLAY_DEEP,
+};
+
 enum omap_dss_reset_phase {
 	OMAP_DSS_RESET_OFF = 1,
 	OMAP_DSS_RESET_ON = 2,
@@ -678,6 +683,7 @@ struct omap_overlay_manager {
 
 	int (*enable)(struct omap_overlay_manager *mgr);
 	int (*disable)(struct omap_overlay_manager *mgr);
+	bool (*is_enabled)(struct omap_overlay_manager *mgr);
 };
 
 enum omap_writeback_source_type {
@@ -837,6 +843,7 @@ struct omap_dss_device {
 	struct omap_overlay_manager *manager;
 	struct omap_writeback *wb_manager;
 
+	enum omap_dss_display_suspend_mode s_mode;
 	enum omap_dss_display_state state;
 	enum omap_channel channel;
 

@@ -11,6 +11,7 @@
 #include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
+#include <linux/regulator/consumer.h>
 #include <linux/slab.h>
 
 #include <linux/input/goodix-gt80x.h>
@@ -112,12 +113,12 @@ struct goodix_gt80x_priv {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
 	struct workqueue_struct *wq;
+	struct regulator *regulator;
 
 	int irq;
 
 	struct work_struct work;
 
-	void (*set_power)(int on);
 	void (*set_shutdown)(int on);
 
 	int flags;
@@ -154,14 +155,25 @@ static void goodix_gt80x_shutdown(struct i2c_client *client, int on_off)
 
 static void goodix_gt80x_power(struct i2c_client *client, int on_off)
 {
+	static int state = 0;
 	struct goodix_gt80x_priv *priv = i2c_get_clientdata(client);
+
+	if (state == on_off)
+		return;
+
+	dev_dbg(&priv->client->dev, "%s %s\n",
+			__FUNCTION__, on_off ? "on" : "off");
+
+	state = on_off;
 
 	// shutdown line must be down when power is cut to avoid leak.
 	if (on_off == 0)
 		goodix_gt80x_shutdown(client, 0);
 
-	if (priv->set_power)
-		priv->set_power(on_off);
+	if (on_off)
+		regulator_enable(priv->regulator);
+	else
+		regulator_disable(priv->regulator);
 }
 
 static int goodix_gt80x_write(struct i2c_client * client, u8 addr, u8 *value, u8 len)
@@ -436,7 +448,6 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 	if (pdata) {
 		priv->irq = pdata->irq;
 
-		priv->set_power = pdata->set_power;
 		priv->set_shutdown = pdata->set_shutdown;
 
 		priv->flags = pdata->flags;
@@ -454,6 +465,13 @@ static int goodix_gt80x_probe(struct i2c_client *client, const struct i2c_device
 	if (priv->input_dev == NULL) {
 		ret = -ENOMEM;
 		goto err_input_alloc_failed;
+	}
+
+	priv->regulator = regulator_get(&client->dev, "tsp_vcc");
+	if (IS_ERR(priv->regulator)) {
+		ret = -ENODEV;
+		dev_err(&client->dev, "failed to get regulator\n");
+		goto err_regulator_get;
 	}
 
 	ret = goodix_gt80x_startup_sequence(client);
@@ -537,6 +555,9 @@ err_setup_failed:
 
 err_detect_failed:
 	goodix_gt80x_power(client, 0);
+	regulator_put(priv->regulator);
+
+err_regulator_get:
 	input_free_device(priv->input_dev);
 
 err_input_alloc_failed:
@@ -562,6 +583,8 @@ static int goodix_gt80x_remove(struct i2c_client *client)
 	input_unregister_device(priv->input_dev);
 
 	goodix_gt80x_power(client, 0);
+
+	regulator_put(priv->regulator);
 
 	kfree(priv);
 	return 0;

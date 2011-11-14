@@ -133,6 +133,7 @@ struct omap3_control_regs {
 	u32 sramldo4;
 	u32 sramldo5;
 	u32 csi;
+	u32 padconf_sys_nirq;
 };
 
 static struct omap3_control_regs control_context;
@@ -240,7 +241,10 @@ void omap3_save_scratchpad_contents(void)
 
 	/* Populate the Scratchpad contents */
 	scratchpad_contents.boot_config_ptr = 0x0;
-	if (omap_rev() != OMAP3430_REV_ES3_0 &&
+	if (cpu_is_omap3630())
+		scratchpad_contents.public_restore_ptr =
+			virt_to_phys(get_omap3630_restore_pointer());
+	else if (omap_rev() != OMAP3430_REV_ES3_0 &&
 					omap_rev() != OMAP3430_REV_ES3_1)
 		scratchpad_contents.public_restore_ptr =
 			virt_to_phys(get_restore_pointer());
@@ -267,8 +271,9 @@ void omap3_save_scratchpad_contents(void)
 			cm_read_mod_reg(WKUP_MOD, CM_CLKSEL);
 	prcm_block_contents.cm_clken_pll =
 			cm_read_mod_reg(PLL_MOD, CM_CLKEN);
+	/*Workaround for errata i671. Avoid extra latency at wakeup*/
 	prcm_block_contents.cm_autoidle_pll =
-			cm_read_mod_reg(PLL_MOD, OMAP3430_CM_AUTOIDLE_PLL);
+			cm_read_mod_reg(PLL_MOD, OMAP3430_CM_AUTOIDLE_PLL) & ~(OMAP3430_AUTO_PERIPH_DPLL_MASK);
 	prcm_block_contents.cm_clksel1_pll =
 			cm_read_mod_reg(PLL_MOD, OMAP3430_CM_CLKSEL1_PLL);
 	prcm_block_contents.cm_clksel2_pll =
@@ -415,6 +420,8 @@ void omap3_control_save_context(void)
 	control_context.sramldo4 = omap_ctrl_readl(OMAP343X_CONTROL_SRAMLDO4);
 	control_context.sramldo5 = omap_ctrl_readl(OMAP343X_CONTROL_SRAMLDO5);
 	control_context.csi = omap_ctrl_readl(OMAP343X_CONTROL_CSI);
+	control_context.padconf_sys_nirq =
+			omap_ctrl_readl(OMAP343X_CONTROL_PADCONF_SYSNIRQ);
 	return;
 }
 
@@ -471,6 +478,8 @@ void omap3_control_restore_context(void)
 	omap_ctrl_writel(control_context.sramldo4, OMAP343X_CONTROL_SRAMLDO4);
 	omap_ctrl_writel(control_context.sramldo5, OMAP343X_CONTROL_SRAMLDO5);
 	omap_ctrl_writel(control_context.csi, OMAP343X_CONTROL_CSI);
+	omap_ctrl_writel(control_context.padconf_sys_nirq,
+					OMAP343X_CONTROL_PADCONF_SYSNIRQ);
 	return;
 }
 #endif /* CONFIG_ARCH_OMAP3 && CONFIG_PM */

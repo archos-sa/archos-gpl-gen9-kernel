@@ -27,25 +27,7 @@
 
 #include "mux.h"
 
-static struct gpio_led gpio_leds[] = {
-	{
-		.name			= "power",
-		.default_trigger	= "default-on",
-		.gpio			= -1,
-		.active_low		= 0,
-	},
-	{
-		.name			= "lcd-backlight",
-		.default_trigger	= "backlight",
-		.gpio			= -1,
-		.active_low		= 1,
-	},
-	{
-		.name			= "status",
-		.default_trigger	= "default-on",
-		.gpio			= -1,
-		.active_low		= 0,
-	}
+static struct gpio_led gpio_leds[3] = {
 };
 
 static struct omap_pwm_led_platform_data board_backlight_data = {
@@ -59,7 +41,7 @@ static struct regulator *bkl_reg = NULL;
 
 static struct gpio_led_platform_data board_led_data = {
 	.leds		= gpio_leds,
-	.num_leds	= ARRAY_SIZE(gpio_leds),
+	.num_leds	= 0,
 };
 
 static struct platform_device board_led_device = {
@@ -80,21 +62,21 @@ static void bkl_set_pad(struct omap_pwm_led_platform_data *self, int on_off)
 {
 	if (on_off == 0) {
 		if (self->invert)
-			omap_mux_init_signal(backlight_led_pwm.signal_off, 
+			omap_mux_init_signal(backlight_led_pwm.signal_off,
 					OMAP_PIN_INPUT_PULLUP);
 		else
-			omap_mux_init_signal(backlight_led_pwm.signal_off, 
+			omap_mux_init_signal(backlight_led_pwm.signal_off,
 					OMAP_PIN_INPUT_PULLDOWN);
-			
+
 	} else
-		omap_mux_init_signal(backlight_led_pwm.signal, 
-				OMAP_PIN_OUTPUT);	
+		omap_mux_init_signal(backlight_led_pwm.signal,
+				OMAP_PIN_OUTPUT);
 }
 
 static void bkl_set_power(struct omap_pwm_led_platform_data *self, int on_off)
 {
 	pr_debug("%s: on_off:%d\n", __func__, on_off);
-	
+
 	if (bkl_reg != NULL) {
 		if (on_off)
 			regulator_enable(bkl_reg);
@@ -104,7 +86,7 @@ static void bkl_set_power(struct omap_pwm_led_platform_data *self, int on_off)
 
 	if (gpio_is_valid(bkl_power_gpio))
 		gpio_set_value( bkl_power_gpio, on_off );
-	
+
 }
 
 static void bkl_set_power_initial(struct omap_pwm_led_platform_data *self)
@@ -115,19 +97,18 @@ static void bkl_set_power_initial(struct omap_pwm_led_platform_data *self)
 
 	if (gpio_is_valid(bkl_power_gpio))
 		gpio_set_value( bkl_power_gpio, false );
-	
+
 }
 
 static int __init archos_leds_init(void)
 {
 	const struct archos_leds_config *leds_cfg;
 	const struct archos_leds_conf *cfg;
-	int power_led;
-	int status_led;
+	int iled;
 	int ret;
-	
+
 	pr_debug("archos_leds_init\n");
-	
+
 	leds_cfg = omap_get_config( ARCHOS_TAG_LEDS, struct archos_leds_config );
 	cfg = hwrev_ptr(leds_cfg, hardware_rev);
 	if (IS_ERR(cfg)) {
@@ -137,32 +118,54 @@ static int __init archos_leds_init(void)
 	}
 
 	/* Power Led (GPIO) */
-
-	power_led = cfg->power_led;
-	pr_debug("%s: power led on gpio %i\n", __func__, power_led);
-	
-	if (gpio_is_valid(power_led)) {
-		gpio_leds[0].gpio = power_led;
-		gpio_leds[0].active_low = cfg->pwr_invert;
+	if (gpio_is_valid(cfg->power_led)) {
+		pr_debug("%s: power led on gpio %i\n", __func__, cfg->power_led);
+		gpio_leds[board_led_data.num_leds].gpio = cfg->power_led;
+		gpio_leds[board_led_data.num_leds].active_low = cfg->pwr_invert;
+		gpio_leds[board_led_data.num_leds].name = "power";
+		gpio_leds[board_led_data.num_leds].default_trigger = "default-on";
+		omap_mux_init_gpio(cfg->power_led, PIN_OUTPUT);
+		board_led_data.num_leds++;
 	} else
 		pr_debug("%s: no power led configured\n", __func__);
 
-	status_led = cfg->status_led;
-	pr_debug("%s: status led on gpio %i\n", __func__, status_led);
-	
-	if (gpio_is_valid(status_led)) {
-		gpio_leds[2].gpio = status_led;
-		gpio_leds[2].active_low = cfg->pwr_invert;
+	/* Status Led (GPIO) */
+	if (gpio_is_valid(cfg->status_led)) {
+		pr_debug("%s: status led on gpio %i\n", __func__, cfg->status_led);
+		gpio_leds[board_led_data.num_leds].gpio = cfg->status_led;
+		gpio_leds[board_led_data.num_leds].name = "status";
+		gpio_leds[board_led_data.num_leds].default_trigger = "default-on";
+		omap_mux_init_gpio(cfg->status_led, PIN_OUTPUT);
+		board_led_data.num_leds++;
 	} else
 		pr_debug("%s: no status led configured\n", __func__);
 
-	if (gpio_is_valid(power_led) || gpio_is_valid(status_led)) {
+	if (board_led_data.num_leds) {
 		ret = platform_device_register(&board_led_device);
 		if (IS_ERR_VALUE(ret))
-			pr_err("unable to register power LED\n");
+			pr_err("unable to register %d gpio LEDs\n",
+					board_led_data.num_leds);
 	}
 
-	/* Backlight Led */
+	for (iled = 0; iled < board_led_data.num_leds; iled++) {
+		/* FIXME: Use a generic way to setup off mode configuration */
+		u16 val;
+
+		if (!gpio_leds[iled].active_low)
+			continue;
+
+		 val = omap_mux_get_gpio(gpio_leds[iled].gpio);
+
+		if (val != OMAP_MUX_TERMINATOR) {
+			val &= ~(OMAP_OFF_EN | OMAP_OFFOUT_EN \
+					| OMAP_OFF_PULL_EN \
+					| OMAP_OFF_PULL_UP);
+			val |= OMAP_PIN_OFF_INPUT_PULLUP;
+			omap_mux_set_gpio(val, gpio_leds[iled].gpio);
+		}
+	}
+
+	/* Backlight Led (PWM) */
 	backlight_led_pwm = cfg->backlight_led;
 	pr_debug("%s: backlight led on pwm type %d timer %i\n",
 			__func__, backlight_led_pwm.src, backlight_led_pwm.timer);
@@ -195,12 +198,12 @@ static int __init archos_leds_init(void)
 
 	ret = platform_device_register(&board_backlight_device);
 	if (ret < 0) {
-		pr_err("unable to register backlight LED\n");
+		pr_err("unable to register backlight pwm LED\n");
 		return ret;
 	}
-	
+
 	if (cfg->bkl_regulator_name) {
-		bkl_reg = regulator_get( &board_backlight_device.dev, 
+		bkl_reg = regulator_get( &board_backlight_device.dev,
 				cfg->bkl_regulator_name);
 		if (IS_ERR(bkl_reg)) {
 			dev_err(&board_backlight_device.dev, "Unable to get LED regulator\n");

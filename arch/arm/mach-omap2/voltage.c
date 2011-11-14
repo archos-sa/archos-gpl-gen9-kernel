@@ -40,10 +40,14 @@
 #include <plat/voltage.h>
 #include <plat/smartreflex.h>
 #include <plat/control.h>
+#include <plat/prcm.h>
 
+#include "cm.h"
+#include "cm-regbits-34xx.h"
 #include "prm-regbits-34xx.h"
 #include "prm44xx.h"
 #include "prm-regbits-44xx.h"
+#include "clock3xxx.h"
 
 #define VP_IDLE_TIMEOUT		200
 #define VP_TRANXDONE_TIMEOUT	400
@@ -2112,6 +2116,7 @@ int omap_voltage_calib_reset(struct voltagedomain *voltdm)
 {
 	struct omap_vdd_info *vdd;
 	struct omap_volt_data *volt_data;
+	int i;
 
 	if (IS_ERR_OR_NULL(voltdm)) {
 		pr_warning("%s: VDD specified does not exist!\n", __func__);
@@ -2121,7 +2126,7 @@ int omap_voltage_calib_reset(struct voltagedomain *voltdm)
 	vdd = container_of(voltdm, struct omap_vdd_info, voltdm);
 	volt_data = vdd->volt_data;
 	/* reset the calibrated voltages as 0 */
-	while (volt_data->volt_nominal) {
+	for (i = 0; i < vdd->volt_data_count; i++) {
 		volt_data->volt_calibrated = 0;
 		volt_data++;
 	}
@@ -2678,6 +2683,7 @@ static int omap_voltage_scale_internal(struct voltagedomain *voltdm)
 	int is_volt_scaled = 0, i;
 	bool is_sr_disabled = false;
 	struct omap_vdd_info *vdd;
+	struct omap_volt_data *vnom;
 	struct plist_node *node;
 	unsigned long volt;
 
@@ -2687,9 +2693,9 @@ static int omap_voltage_scale_internal(struct voltagedomain *voltdm)
 	}
 
 	vdd = container_of(voltdm, struct omap_vdd_info, voltdm);
+	vnom = omap_voltage_get_nom_volt(voltdm);
 
-	curr_volt = omap_get_operation_voltage(
-			omap_voltage_get_nom_volt(voltdm));
+	curr_volt = vnom->volt_nominal;
 
 	/* Find the highest voltage for this vdd */
 	node = plist_last(&vdd->user_list);
@@ -2883,3 +2889,65 @@ static int __init omap_voltage_init(void)
 	return 0;
 }
 device_initcall(omap_voltage_init);
+
+#ifdef CONFIG_ARCH_OMAP3
+#define OPP50RATE 100000000
+void set_dpll3_volt_freq(bool dpll3_restore)
+{
+	struct clk *dpll3_m2_ck = clk_get(NULL, "dpll3_m2_ck");
+	struct voltagedomain *voltdm = omap_voltage_domain_get("core");
+	struct omap_vdd_info *vdd;
+	int l3_div;
+	static struct omap_volt_data *vdd2_save_vdata;
+	static long dpll3_save_rate;
+
+	if (!dpll3_m2_ck || !voltdm)
+		return;
+
+	vdd = container_of(voltdm, struct omap_vdd_info, voltdm);
+
+	if (!dpll3_restore) {
+		/* Step 1, reduce DPLL3 to OPP50 */
+		dpll3_save_rate = clk_get_rate(dpll3_m2_ck);
+		l3_div = cm_read_mod_reg(CORE_MOD, CM_CLKSEL) &
+					OMAP3430_CLKSEL_L3_MASK;
+		/*
+		 * Using the direct call to the clock's set rate routine
+		 * rather than the clk_set_rate() infrastructure.  That is
+		 * because we don't want the normal notifications of clock
+		 * change sent out just because we are changing it for this
+		 * errata work around.  The old clock rate will be back as
+		 * soon as core (and anyone we would notify) turn back on.
+		 */
+		/* Is DPLL3 already at OPP50? */
+		if (dpll3_save_rate != OPP50RATE * l3_div)
+			omap3_core_dpll_m2_set_rate(dpll3_m2_ck,
+						OPP50RATE * l3_div);
+		else
+			dpll3_save_rate = 0;
+
+		/* Step 2, set VDD2 to OPP100 */
+		vdd2_save_vdata = omap_voltage_get_nom_volt(voltdm);
+		/* vdd2 already at OPP100 ? */
+		if (vdd2_save_vdata->volt_nominal !=
+					vdd->volt_data[1].volt_nominal)
+			vp_forceupdate_scale_voltage(vdd, &(vdd->volt_data[1]));
+		else
+			vdd2_save_vdata = NULL;
+	} else {
+		/* Step 1, return VDD2 back to its previous value */
+		if (vdd2_save_vdata) {
+			vp_forceupdate_scale_voltage(vdd, vdd2_save_vdata);
+			vdd2_save_vdata = NULL;
+		}
+
+		/* Step 2, return DPLL3 back to its previous value */
+		if (dpll3_save_rate) {
+			omap3_core_dpll_m2_set_rate(dpll3_m2_ck,
+							dpll3_save_rate);
+			dpll3_save_rate = 0;
+		}
+	}
+
+}
+#endif

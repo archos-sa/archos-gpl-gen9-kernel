@@ -711,6 +711,10 @@ static int dss_suspend_device(struct device *dev, void *data)
 {
 	int r;
 	struct omap_dss_device *dssdev = to_dss_device(dev);
+	int *early_deep = (int *)data;
+
+	if (!early_deep)
+		return 0;
 
 	/* don't work on suspended displays */
 	if ((dssdev->state == OMAP_DSS_DISPLAY_SUSPENDED) ||
@@ -728,16 +732,18 @@ static int dss_suspend_device(struct device *dev, void *data)
 		return -ENOSYS;
 	}
 
+	if (*early_deep != dssdev->s_mode)
+		return 0;
+
 	r = dssdev->driver->suspend(dssdev);
 	if (r)
 		return r;
-
 	dssdev->activate_after_resume = true;
 
 	return 0;
 }
 
-int dss_suspend_all_devices(void)
+int dss_suspend_all_devices(int early_deep)
 {
 	int r;
 	struct bus_type *bus = dss_get_bus();
@@ -746,11 +752,11 @@ int dss_suspend_all_devices(void)
 		return;
 
 	mutex_lock(&display.power_lock);
-	r = bus_for_each_dev(bus, NULL, NULL, dss_suspend_device);
+	r = bus_for_each_dev(bus, NULL, &early_deep, dss_suspend_device);
 	mutex_unlock(&display.power_lock);
 	if (r) {
 		/* resume all displays that were suspended */
-		dss_resume_all_devices();
+		dss_resume_all_devices(early_deep);
 		return r;
 	}
 
@@ -761,10 +767,17 @@ static int dss_resume_device(struct device *dev, void *data)
 {
 	int r;
 	struct omap_dss_device *dssdev = to_dss_device(dev);
+	int *early_deep = (int *)data;
+
+	if (!early_deep)
+		return 0;
 
 	/* don't work on non-suspended displays */
 	if ((dssdev->state != OMAP_DSS_DISPLAY_SUSPENDED) &&
 	    (dssdev->state != OMAP_DSS_DISPLAY_DISABLED))
+		return 0;
+
+	if (*early_deep != dssdev->s_mode)
 		return 0;
 
 	if (dssdev->activate_after_resume && dssdev->driver->resume) {
@@ -785,7 +798,7 @@ static int dss_resume_device(struct device *dev, void *data)
 	return 0;
 }
 
-int dss_resume_all_devices(void)
+int dss_resume_all_devices(int early_deep)
 {
 	struct bus_type *bus = dss_get_bus();
 	int r = 0;
@@ -794,7 +807,7 @@ int dss_resume_all_devices(void)
 		return;
 
 	mutex_lock(&display.power_lock);
-	r = bus_for_each_dev(bus, NULL, NULL, dss_resume_device);
+	r = bus_for_each_dev(bus, NULL, &early_deep, dss_resume_device);
 	mutex_unlock(&display.power_lock);
 
 	return r;

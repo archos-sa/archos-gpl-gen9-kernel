@@ -98,7 +98,6 @@ static ssize_t overlay_manager_store(struct omap_overlay *ovl, const char *buf,
 	}
 
 	old_mgr = ovl->manager;
-
 	/* detach old manager */
 	if (old_mgr) {
 		r = ovl->unset_manager(ovl);
@@ -688,13 +687,13 @@ static int omap_dss_unset_manager(struct omap_overlay *ovl)
 		DSSERR("overlay has to be disabled to unset the manager\n");
 		return -EINVAL;
 	}
-
-	if (ovl->manager->device->type != OMAP_DISPLAY_TYPE_HDMI) {
-		r = ovl->wait_for_go(ovl);
-		if (r)
-			return r;
+	if (ovl->manager->device){
+		if (ovl->manager->device->type != OMAP_DISPLAY_TYPE_HDMI) {
+			r = ovl->wait_for_go(ovl);
+			if (r)
+				return r;
+		}
 	}
-
 	ovl->manager = NULL;
 
 	return 0;

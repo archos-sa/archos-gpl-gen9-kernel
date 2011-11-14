@@ -251,6 +251,7 @@
 #define OMAP44XX_CONTROL_FUSE_MPU_OPPTNT        0x24C
 #define OMAP44XX_CONTROL_FUSE_CORE_OPP50	0x254
 #define OMAP44XX_CONTROL_FUSE_CORE_OPP100	0x257
+#define OMAP44XX_CONTROL_FUSE_CORE_OPP119	0x25A
 
 #define CTRL_FUSE_OPP_VDD_MPU_3 (OMAP443X_SCM_BASE + OMAP44XX_CONTROL_FUSE_MPU_OPPTNT)
 
@@ -424,6 +425,7 @@ extern void omap3_save_scratchpad_contents(void);
 extern void omap3_clear_scratchpad_contents(void);
 extern u32 *get_restore_pointer(void);
 extern u32 *get_es3_restore_pointer(void);
+extern u32 *get_omap3630_restore_pointer(void);
 extern u32 omap3_arm_context[128];
 extern void omap3_control_save_context(void);
 extern void omap3_control_restore_context(void);

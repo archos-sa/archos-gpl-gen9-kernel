@@ -445,6 +445,11 @@ config ARCHOS_FORCE_OMAP4_HP
 	  Mass production devices have additional cooling to allow running at
 	  1.5 GHz, this setting allows 1.5GHz on early prototypes.
 
+config ARCHOS_FORCE_OMAP4_SR_ENABLE_ON_INIT
+	bool "Force SR enable_on_init for omap4, currently not safe."
+	depends on MACH_ARCHOS && ARCH_OMAP4
+	default n
+
 config ARCHOS_OMAP4_DUTY_CYCLE
 	tristate "Control OPP_NITRO usage based on on-die temperature sensor"
 	depends on OMAP_TEMP_SENSOR && SENSORS_OMAP_BANDGAP_TEMP_SENSOR

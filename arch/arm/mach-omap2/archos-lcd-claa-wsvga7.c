@@ -57,15 +57,15 @@ static int __init panel_init(void)
 		gpio_set_value(display_gpio.lvds_en, 0);
 
 	// vcom
-	if (display_gpio.vcom_pwm.timer != -1)
+	if (display_gpio.vcom_pwm.timer != -1) {
 		vcom_timer = omap_dm_timer_request_specific(display_gpio.vcom_pwm.timer);
 
-	if (vcom_timer != NULL) {
-		omap_dm_timer_set_source(vcom_timer, OMAP_TIMER_SRC_SYS_CLK);
-	} else {
-		printk( "failed to request vcom pwm timer %d \n", display_gpio.vcom_pwm.timer);
+		if (vcom_timer != NULL) {
+			omap_dm_timer_disable(vcom_timer);
+		} else {
+			printk( "failed to request vcom pwm timer %d \n", display_gpio.vcom_pwm.timer);
+		}
 	}
-
 
 	msleep(10);
 	return 0;
@@ -121,6 +121,8 @@ static int panel_enable(struct omap_dss_device *disp)
 	panel_state = 1;
 
 	if (vcom_timer != NULL) {
+		omap_dm_timer_set_source(vcom_timer, OMAP_TIMER_SRC_SYS_CLK);
+
 		omap_dm_timer_set_pwm( vcom_timer, 1, 1, OMAP_TIMER_TRIGGER_OVERFLOW_AND_COMPARE);
 
 		pwm_set_speed(vcom_timer, 30000, vcom_val);
@@ -150,7 +152,6 @@ static void panel_disable(struct omap_dss_device *disp)
 
 	if (vcom_timer != NULL) {
 		omap_dm_timer_stop(vcom_timer);
-		omap_dm_timer_disable(vcom_timer);
 	}
 	panel_state = 0;
 }

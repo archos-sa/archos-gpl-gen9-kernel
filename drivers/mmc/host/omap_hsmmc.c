@@ -1625,7 +1625,8 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 	* the actual issue is root caused.
 	*/
 #ifdef CONFIG_TIWLAN_SDIO
-	if (1 || machine_is_omap_4430sdp()) {
+	/* quick hack to solving issue for the weekend */
+	if (!cpu_is_omap34xx()) {
 		if (host->id == CONFIG_TIWLAN_MMC_CONTROLLER-1) {
 			unsigned int irq_mask = 0, status = 0, loops = 0, i = 0;
 

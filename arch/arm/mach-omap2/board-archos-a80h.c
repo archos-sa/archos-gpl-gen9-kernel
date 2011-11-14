@@ -407,6 +407,25 @@ static struct archos_i2c_tsp_config i2c_tsp_config __initdata = {
 	},
 };
 
+static struct archos_temp_duty_cycle_config temp_duty_cycle_config __initdata = {
+		.nitro_interval = 6000,
+		.cooling_interval = 6000, /* 2*tau */
+		.nitro_rate = 1200000,
+		.cooling_rate = 1008000,
+		.extra_cooling_rate = 800000,
+		.inhibit_charging = true,
+
+		.duty_cycle_temp_table = {
+			{ .temperature=70000, .heating_budget=6000,   .cooling_needed=false, },
+			{ .temperature=72000, .heating_budget=6000,   .cooling_needed=true,  },
+			{ .temperature=73000, .heating_budget=6000/2, .cooling_needed=true,  },
+			{ .temperature=74000, .heating_budget=6000/3, .cooling_needed=true,  },
+			{ .temperature=75000, .heating_budget=6000/6, .cooling_needed=true,  },
+			{ .temperature=77000, .heating_budget=0,      .cooling_needed=true,  },
+			{ 0 }
+		},
+};
+
 static struct archos_gps_config gps_config __initdata = {
 	.nrev = 6,
 	.rev[0] = {
@@ -1139,6 +1158,7 @@ static struct omap_board_config_kernel board_config[] __initdata = {
 	{ ARCHOS_TAG_USB,		&usb_config},
 	{ ARCHOS_TAG_SATA,		&sata_config},
 	{ ARCHOS_TAG_I2C_TSP,		&i2c_tsp_config},
+	{ ARCHOS_TAG_TEMP_DUTY_CYCLE,	&temp_duty_cycle_config},
 };
 
 #ifdef CONFIG_OMAP2_DSS_HDMI

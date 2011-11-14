@@ -280,7 +280,24 @@ static void omap_uart_restore_context(struct omap_uart_state *uart)
 
 	uart->context_valid = 0;
 
-	serial_write_reg(uart, UART_OMAP_MDR1, 0x7);
+	if (cpu_is_omap44xx()) {
+		serial_write_reg(uart, UART_OMAP_MDR1, 0x7);
+	} else {
+		/* Disable the UART first, then configure */
+		if (uart->dma_enabled)
+			/* This enables the DMA Mode, the FIFO,the Rx and
+			 * Tx FIFO levels. Keeping the UARt disabled in
+			 * MDR1 Register.
+			 */
+			omap_uart_mdr1_errataset(uart->num, 0x07,
+					(UART_FCR_DMA_SELECT | 0x51));
+		else
+			/* This enables the FIFO, the Rx and Tx FIFO levels.
+			 * Keeping the UARt Disabled in MDR1 Register.
+			 */
+			omap_uart_mdr1_errataset(uart->num, 0x07, 0x51);
+	}
+
 	/* Config B mode */
 	serial_write_reg(uart, UART_LCR, OMAP_UART_LCR_CONF_MDB);
 	efr = serial_read_reg(uart, UART_EFR);
@@ -296,11 +313,12 @@ static void omap_uart_restore_context(struct omap_uart_state *uart)
 	serial_write_reg(uart, UART_LCR, OMAP_UART_LCR_CONF_MOPER);
 	serial_write_reg(uart, UART_IER, uart->ier);
 	/* Enable FiFo and Trig Threshold */
-	if (uart->dma_enabled)
-		serial_write_reg(uart, UART_FCR, 0x59);
-	else
-		serial_write_reg(uart, UART_FCR, 0x51);
-
+	if (cpu_is_omap44xx()){
+		if (uart->dma_enabled)
+			serial_write_reg(uart, UART_FCR, 0x59);
+		else
+			serial_write_reg(uart, UART_FCR, 0x51);
+	}
 	serial_write_reg(uart, UART_LCR, OMAP_UART_LCR_CONF_MDA);
 	serial_write_reg(uart, UART_MCR, uart->mcr);
 	/* Config B mode */
@@ -316,8 +334,106 @@ static void omap_uart_restore_context(struct omap_uart_state *uart)
 		serial_write_reg(uart, UART_MDR3, uart->mdr3);
 	}
 
-	serial_write_reg(uart, UART_OMAP_MDR1, 0x00); /* UART 16x mode */
+	if (cpu_is_omap44xx()){
+		serial_write_reg(uart, UART_OMAP_MDR1, 0x00); /* UART 16x mode */
+	} else {
+		/* Enable the UART finally */
+		if (uart->dma_enabled)
+			/* This enables the DMA Mode, the FIFO,the Rx and
+			 * Tx FIFO levels. Keeping the UARt Enabled in
+			 * MDR1 Register.
+			 */
+			omap_uart_mdr1_errataset(uart->num, 0x00, \
+					(UART_FCR_DMA_SELECT | 0x51));
+		else
+			/* This enables the FIFO, the Rx and Tx FIFO levels.
+			 * Keeping the UARt Enabled in MDR1 Register.
+			 */
+			omap_uart_mdr1_errataset(uart->num, 0x00, 0x51);
+	}
 }
+
+static inline int _is_per_uart(struct omap_uart_state *uart)
+{
+	if ((omap_rev() <= OMAP3630_REV_ES1_1) &&
+		(uart->num == 2 || uart->num == 3))
+		return 1;
+
+	return 0;
+}
+
+int omap_uart_check_per_uarts_used(void)
+{
+	struct omap_uart_state *uart;
+
+	list_for_each_entry(uart, &uart_list, node) {
+		if (_is_per_uart(uart))
+			return 1;
+	}
+	return 0;
+}
+
+/*
+ * Errata i582 affects PER UARTS..Loop back test is done to
+ * check the UART state when the corner case is encountered
+ */
+static int omap_uart_loopback_test(struct omap_uart_state *uart)
+{
+	u8 loopbk_rhr = 0;
+
+	omap_uart_save_context(uart);
+	serial_write_reg(uart, UART_OMAP_MDR1, 0x7);
+	serial_write_reg(uart, UART_LCR, 0xBF); /* Config B mode */
+	serial_write_reg(uart, UART_DLL, uart->dll);
+	serial_write_reg(uart, UART_DLM, uart->dlh);
+	serial_write_reg(uart, UART_LCR, 0x0); /* Operational mode */
+	/* configure uart3 in UART mode */
+	serial_write_reg(uart, UART_OMAP_MDR1, 0x00); /* UART 16x mode */
+	serial_write_reg(uart, UART_LCR, 0x80);
+	/* Enable internal loop back mode by setting MCR_REG[4].LOOPBACK_EN */
+	serial_write_reg(uart, UART_MCR, 0x10);
+
+	/* write to THR,read RHR and compare */
+	/* Tx output is internally looped back to Rx input in loop back mode */
+	serial_write_reg(uart, UART_LCR_DLAB, 0x00);
+	/* Enables write to THR and read from RHR */
+	serial_write_reg(uart, UART_TX, 0xCC); /* writing data to THR */
+	/* reading data from RHR */
+	loopbk_rhr = (serial_read_reg(uart, UART_RX) & 0xFF);
+	if (loopbk_rhr == 0xCC) {
+		/* compare passes,try comparing with different data */
+		serial_write_reg(uart, UART_TX, 0x69);
+		loopbk_rhr = (serial_read_reg(uart, UART_RX) & 0xFF);
+		if (loopbk_rhr == 0x69) {
+			/* compare passes,reset UART3 and re-configure module */
+			omap_uart_reset(uart);
+			omap_uart_restore_context(uart);
+			return 0;
+		}
+	} else {	/* requires warm reset */
+		return -ENODEV;
+	}
+	return 0;
+}
+
+int omap_uart_per_errata(void)
+{
+	struct omap_uart_state *uart;
+
+	/* For all initialised UART modules that are in PER domain
+	 * do loopback test
+	 */
+	list_for_each_entry(uart, &uart_list, node) {
+		if (_is_per_uart(uart)) {
+			if (omap_uart_loopback_test(uart))
+				return -ENODEV;
+			else
+				return 0;
+		}
+	}
+	return 0;
+}
+
 #else
 static inline void omap_uart_save_context(struct omap_uart_state *uart) {}
 static inline void omap_uart_restore_context(struct omap_uart_state *uart) {}
@@ -778,11 +894,19 @@ static void omap_uart_idle_init(struct omap_uart_state *uart)
 		switch (uart->num) {
 		case 0:
 			wk_mask = OMAP3430_ST_UART1_MASK;
+#if defined(CONFIG_MACH_OMAP_ZOOM3)
+			padconf = 0;  /*For ZOOM3 Modem unwanted RX_WAKEUP*/
+#else
 			padconf = 0x182;
+#endif
 			break;
 		case 1:
 			wk_mask = OMAP3430_ST_UART2_MASK;
+#if defined(CONFIG_MACH_OMAP_ZOOM3)
+			padconf = 0x174;  /*For ZOOM3 CTS_WAKEUP*/
+#else
 			padconf = 0x17a;
+#endif
 			break;
 		case 2:
 			wk_mask = OMAP3430_ST_UART3_MASK;

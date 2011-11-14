@@ -253,7 +253,7 @@ int omapdss_dpi_display_enable(struct omap_dss_device *dssdev)
 #ifdef CONFIG_OMAP2_DSS_USE_DSI_PLL
 	if ( ! dssdev->phy.dpi.force_dispc_clk ) {
 
-		r = dsi_pll_init(dssdev, 0, 1);
+		r = dsi_pll_init(dssdev, true, true);
 		if (r)
 			goto err1;
 	}
