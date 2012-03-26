@@ -103,7 +103,7 @@ static long setup_mgr(struct dsscomp_dev *cdev,
 		return 0;
 	}
 	dsscomp_prepdata(d);
-	return dsscomp_createcomp(mgr, d, false) ? 0 : -EINVAL;
+	return dsscomp_createcomp(mgr, d, blankpost) ? 0 : -EINVAL;
 }
 
 void dsscomp_prepdata(struct dsscomp_setup_mgr_data *d)
@@ -128,7 +128,7 @@ void dsscomp_prepdata(struct dsscomp_setup_mgr_data *d)
 #endif
 			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
 #ifdef CONFIG_VIDEO_CMA
-				cma_set_buf_state(oi->ba, CMABUF_BUSY, oi->cfg.ix);
+				cma_set_buf_state(oi->ba, CMABUF_READY, oi->cfg.ix);
 #endif
 			}
 		}
@@ -148,7 +148,7 @@ void dsscomp_prepdata_drop(struct dsscomp_setup_mgr_data *d)
 #endif
 			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
 #ifdef CONFIG_VIDEO_CMA
-				cma_set_buf_state(oi->ba, CMABUF_FREE, -1);
+				cma_set_buf_state(oi->ba, CMABUF_READY, -1);
 #endif
 			}
 		}
@@ -182,6 +182,8 @@ dsscomp_t dsscomp_createcomp(struct omap_overlay_manager *mgr,
 	if (r)
 		goto cleanup;
 
+	dsscomp_release_same_comps(comp);
+
 	return comp;
 cleanup:
 	for (i = 0; i < d->num_ovls; i++) {
@@ -193,7 +195,7 @@ cleanup:
 #endif
 			} else if (oi->cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
 #ifdef CONFIG_VIDEO_CMA
-				cma_set_buf_state(oi->ba, CMABUF_FREE, -1);
+				cma_set_buf_state(oi->ba, CMABUF_READY, -1);
 #endif
 			}
 		}
@@ -341,26 +343,6 @@ static long check_ovl(struct dsscomp_dev *cdev,
 	return allowed;
 }
 
-static long wait(struct dsscomp_dev *cdev, struct dsscomp_wait_data *wd)
-{
-	struct omap_overlay_manager *mgr;
-	dsscomp_t comp;
-
-	/* get manager */
-	if (wd->ix >= cdev->num_displays || !cdev->displays[wd->ix])
-		return -EINVAL;
-	mgr = cdev->displays[wd->ix]->manager;
-	if (!mgr)
-		return -ENODEV;
-
-	/* get composition */
-	comp = dsscomp_find(mgr, wd->sync_id);
-	if ((!comp) || (IS_ERR(comp)))
-		return 0;
-
-	return dsscomp_wait(comp, wd->phase, usecs_to_jiffies(wd->timeout_us));
-}
-
 static void fill_cache(struct dsscomp_dev *cdev)
 {
 	unsigned long i;
@@ -428,13 +410,6 @@ static long comp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		    copy_to_user(ptr, &chk, sizeof(chk));
 		break;
 	}
-	case DSSCOMP_WAIT:
-	{
-		struct dsscomp_wait_data wd;
-		r = copy_from_user(&wd, ptr, sizeof(wd)) ? :
-		    wait(cdev, &wd);
-		break;
-	}
 	case DSSCOMP_ISR_START:
 	{
 		r = isr_start( cdev, ptr );
@@ -464,6 +439,16 @@ static long comp_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	{
 		r = isr_flush( cdev );
 		break;	
+	}
+	case DSSCOMP_ISR_RESUME:
+	{
+		r = isr_resume( cdev );
+		break;
+	}
+	case DSSCOMP_ISR_SUSPEND:
+	{
+		r = isr_suspend( cdev );
+		break;
 	}
 	
 	default:

@@ -228,9 +228,9 @@ struct omap_hsmmc_host {
 static int omap_hsmmc_card_detect(struct device *dev, int slot)
 {
 	struct omap_mmc_platform_data *mmc = dev->platform_data;
-
+	pr_err("%s\n",__func__);
 	/* NOTE: assumes card detect signal is active-low */
-	return !gpio_get_value_cansleep(mmc->slots[0].switch_pin);
+	return gpio_get_value_cansleep(mmc->slots[0].switch_pin);
 }
 
 static int omap_hsmmc_get_wp(struct device *dev, int slot)
@@ -246,7 +246,7 @@ static int omap_hsmmc_get_cover_state(struct device *dev, int slot)
 	struct omap_mmc_platform_data *mmc = dev->platform_data;
 
 	/* NOTE: assumes card detect signal is active-low */
-	return !gpio_get_value_cansleep(mmc->slots[0].switch_pin);
+	return gpio_get_value_cansleep(mmc->slots[0].switch_pin);
 }
 
 #ifdef CONFIG_PM
@@ -1626,7 +1626,7 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 	*/
 #ifdef CONFIG_TIWLAN_SDIO
 	/* quick hack to solving issue for the weekend */
-	if (!cpu_is_omap34xx()) {
+	if (1 || machine_is_omap_4430sdp()) {
 		if (host->id == CONFIG_TIWLAN_MMC_CONTROLLER-1) {
 			unsigned int irq_mask = 0, status = 0, loops = 0, i = 0;
 
@@ -1653,8 +1653,24 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 				host->polling_enabled = 0;
 				spin_unlock(&host->irq_lock);
 
-				while (!(status & CC) && (loops++ <= POLLING_MAX_LOOPS))
+				while (!(status & CC) && (loops++ < POLLING_MAX_LOOPS)) {
 					status = OMAP_HSMMC_READ(host, STAT);
+
+					if ((ERR & status) && ((CMD_TIMEOUT || CMD_CRC) & status)) {
+						if ((CMD_TIMEOUT & status))
+							req->cmd->error = -ETIMEDOUT;
+						else
+							req->cmd->error = -EILSEQ;
+						omap_hsmmc_request_done(host, req);
+						return;
+					}
+				}
+
+				if (loops == POLLING_MAX_LOOPS) {
+					req->cmd->error = -ETIMEDOUT;
+					omap_hsmmc_request_done(host, req);
+					return;
+				}
 				status = 0; loops = 0;
 
 				if ((req->data->flags & MMC_DATA_READ)) {
@@ -1667,8 +1683,20 @@ static void omap_hsmmc_request(struct mmc_host *mmc, struct mmc_request *req)
 						OMAP_HSMMC_WRITE(host, DATA, *((unsigned long *)(nondma_data + i)));
 				}
 				status = 0; loops = 0;
-				while (!(status & TC) && (loops++ <= POLLING_MAX_LOOPS))
+				while (!(status & TC) && (loops++ < POLLING_MAX_LOOPS)) {
+					if ((ERR & status) && ((CMD_TIMEOUT || DATA_CRC) & status)) {
+						if ((CMD_TIMEOUT & status))
+							req->cmd->error = -ETIMEDOUT;
+						else
+							req->cmd->error = -EILSEQ;
+						break;
+					}
+
 					status = OMAP_HSMMC_READ(host, STAT);
+				}
+				if (loops == POLLING_MAX_LOOPS)
+					req->data->error = -ETIMEDOUT;
+
 				omap_hsmmc_request_done(host, req);
 				return;
 			}
@@ -2431,7 +2459,13 @@ static int __init omap_hsmmc_probe(struct platform_device *pdev)
 		mmc_slot(host).no_off = 1;
 
 	mmc->f_min	= 400000;
-	mmc->f_max	= 52000000;
+
+	if (pdata->max_freq) {
+		dev_warn(mmc_dev(host->mmc),
+				"Max Freq = %d\n", pdata->max_freq);
+		mmc->f_max = pdata->max_freq;
+	} else
+		mmc->f_max	= 52000000;
 
 	spin_lock_init(&host->irq_lock);
 

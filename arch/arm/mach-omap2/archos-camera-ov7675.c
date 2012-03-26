@@ -52,9 +52,13 @@ int __init archos_camera_ov7675_init(void)
 	pwdn_gpio = camera_cfg->rev[hardware_rev].pwr_down;
 
 	archos_gpio_init_output(reset_gpio, "cam_reset");
+	if (camera_cfg->rev[hardware_rev].reset_mux)
+		omap_mux_init_signal(camera_cfg->rev[hardware_rev].reset_mux, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
 	gpio_nb[0] = reset_gpio;
 
 	archos_gpio_init_output(pwdn_gpio, "cam_pwdn");
+	if (camera_cfg->rev[hardware_rev].pwr_down_mux)
+		omap_mux_init_signal(camera_cfg->rev[hardware_rev].pwr_down_mux, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
 	gpio_nb[1] = pwdn_gpio;
 
 #if 0

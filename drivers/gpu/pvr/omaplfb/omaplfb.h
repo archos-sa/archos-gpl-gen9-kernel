@@ -33,6 +33,7 @@
 #include <video/omaplfb-dev.h>
 
 #define OMAPLFB_CLONING_BUFFER_NUM 2
+#define MAX_OVLS 4
 
 extern IMG_BOOL PVRGetDisplayClassJTable(PVRSRV_DC_DISP2SRV_KMJTABLE *psJTable);
 
@@ -161,6 +162,8 @@ struct omaplfb_clone_data {
 	wait_queue_head_t transfer_waitq;
 	wait_queue_head_t dma_waitq;
 	int dma_transfer_done;
+	int nb_dst;
+	int dst_ovls[MAX_OVLS]; /* id of dst each ovls */
 };
 
 #define	OMAPLFB_PAGE_SIZE 4096
@@ -197,7 +200,8 @@ OMAP_ERROR OMAPLFBGetLibFuncAddr(char *szFunctionName,
 void OMAPLFBFlip(OMAPLFB_SWAPCHAIN *psSwapChain, unsigned long aPhyAddr);
 OMAPLFB_DEVINFO *omaplfb_get_devinfo(int index);
 void set_use_dsscomp(int use);
-int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num);
+int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num,
+		int dst_ovls[MAX_OVLS], int nb_dst);
 int omaplfb_disable_cloning(int mgr_id_src);
 void omaplfb_disable_cloning_alldisp(void);
 void omaplfb_create_sysfs(struct omaplfb_device *odev);
@@ -209,6 +213,7 @@ void omaplfb_dsscomp_free(struct dsscomp_setup_mgr_data *datap, dsscomp_t comp);
 void omaplfb_dsscomp_enable(void);
 void omaplfb_dsscomp_disable(void);
 bool omaplfb_dsscomp_isempty(void);
+void omaplfb_flush_comp (int display);
 #ifdef LDM_PLATFORM
 void OMAPLFBDriverSuspend(void);
 void OMAPLFBDriverResume(void);

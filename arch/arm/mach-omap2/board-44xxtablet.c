@@ -47,6 +47,7 @@
 #include <asm/mach/map.h>
 
 #include <plat/board.h>
+#include <plat/omap_apps_brd_id.h>
 #include <plat/common.h>
 #include <plat/control.h>
 #include <plat/timer-gp.h>
@@ -215,23 +216,7 @@ error1:
 
 static struct gpio_led sdp4430_gpio_leds[] = {
 	{
-		.name	= "omap4:green:debug0",
-		.gpio	= 61,
-	},
-	{
-		.name	= "omap4:green:debug1",
-		.gpio	= 30,
-	},
-	{
-		.name	= "omap4:green:debug2",
-		.gpio	= 7,
-	},
-	{
-		.name	= "omap4:green:debug3",
-		.gpio	= 8,
-	},
-	{
-		.name	= "omap4:green:debug4",
+		.name	= "tablet:led_gp_4_c",
 		.gpio	= 50,
 	},
 	{
@@ -1381,6 +1366,10 @@ static int __init tablet_i2c_init(void)
 		tablet_i2c_3_boardinfo, ARRAY_SIZE(tablet_i2c_3_boardinfo));
 	omap_register_i2c_bus(4, 400, &tablet_i2c_4_bus_pdata,
 		tablet_i2c_4_boardinfo, ARRAY_SIZE(tablet_i2c_4_boardinfo));
+
+	/* Setup pull-up resistor for I2C-3 */
+	omap2_i2c_pullup(3, I2C_PULLUP_STD_860_OM_FAST_500_OM);
+
 	return 0;
 }
 
@@ -1531,8 +1520,8 @@ static void enable_board_wakeup_source(void)
 
 static struct omap_volt_pmic_info omap4430_pmic_core = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x61,
 	.i2c_cmdreg = 0x62,
@@ -1544,16 +1533,16 @@ static struct omap_volt_pmic_info omap4430_pmic_core = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 static struct omap_volt_pmic_info omap4460_pmic_core = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1565,16 +1554,16 @@ static struct omap_volt_pmic_info omap4460_pmic_core = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x28,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x26,
 };
 
 static struct omap_volt_pmic_info omap_pmic_mpu = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x55,
 	.i2c_cmdreg = 0x56,
@@ -1586,16 +1575,16 @@ static struct omap_volt_pmic_info omap_pmic_mpu = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x39,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x35,
 };
 
 static struct omap_volt_pmic_info omap_pmic_iva = {
 	.name = "twl",
-	.slew_rate = 4000,
-	.step_size = 12500,
+	.slew_rate = 8000,
+	.step_size = 12660,
 	.i2c_addr = 0x12,
 	.i2c_vreg = 0x5b,
 	.i2c_cmdreg = 0x5c,
@@ -1607,55 +1596,55 @@ static struct omap_volt_pmic_info omap_pmic_iva = {
 	.sleep_cmd = omap_twl_sleep_cmd,
 	.vp_config_erroroffset = 0,
 	.vp_vstepmin_vstepmin = 0x01,
-	.vp_vstepmax_vstepmax = 0x04,
+	.vp_vstepmax_vstepmax = 0x08,
 	.vp_vlimitto_timeout_us = 0x200,
-	.vp_vlimitto_vddmin = 0xA,
-	.vp_vlimitto_vddmax = 0x2D,
+	.vp_vlimitto_vddmin = 0x8,
+	.vp_vlimitto_vddmax = 0x2B,
+};
+
+static struct omap_volt_vc_data vc443x_config = {
+	.vdd0_on	= 1388000,	/* 1.388v */
+	.vdd0_onlp	= 1025000,	/* 1.025v */
+	.vdd0_ret	=  750000,	/* 0.75v  */
+	.vdd0_off	=	0,	/* 0 v    */
+	.vdd1_on	= 1291000,	/* 1.291v */
+	.vdd1_onlp	=  950000,	/* 0.95v  */
+	.vdd1_ret	=  750000,	/* 0.75v  */
+	.vdd1_off	=	0,	/* 0 v    */
+	.vdd2_on	= 1127000,	/* 1.127v */
+	.vdd2_onlp	=  962000,	/* 0.962v */
+	.vdd2_ret	=  750000,	/* 0.75v  */
+	.vdd2_off	=	0,	/* 0 v    */
+};
+
+static struct omap_volt_vc_data vc443x_config_old = {
+	.vdd0_on	= 1350000,	/* 1.35v   */
+	.vdd0_onlp	= 1350000,	/* 1.35v   */
+	.vdd0_ret	=  837500,	/* 0.8375v */
+	.vdd0_off	=	0,	/* 0 v     */
+	.vdd1_on	= 1100000,	/* 1.1v    */
+	.vdd1_onlp	= 1100000,	/* 1.1v    */
+	.vdd1_ret	=  837500,	/* 0.8375v */
+	.vdd1_off	=	0,	/* 0 v     */
+	.vdd2_on	= 1100000,	/* 1.1v    */
+	.vdd2_onlp	= 1100000,	/* 1.1v    */
+	.vdd2_ret	=  837500,	/* 0.8375v */
+	.vdd2_off	=	0,	/* 0 v     */
 };
 
 static struct omap_volt_vc_data vc446x_config = {
-	.vdd0_on = 1350000,	/* 1.35v */
-	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 750000,	/* 0.75v */
-	.vdd0_off = 600000,	/* 0.6 v */
-	.vdd1_on = 1350000,	/* 1.35v */
-	.vdd1_onlp = 1350000,	/* 1.35v */
-	.vdd1_ret = 750000,	/* 0.75v */
-	.vdd1_off = 600000,	/* 0.6 v */
-	.vdd2_on = 1350000,	/* 1.35v */
-	.vdd2_onlp = 1350000,	/* 1.35v */
-	.vdd2_ret = 750000,	/* .75v */
-	.vdd2_off = 600000,	/* 0.6 v */
-};
-
-static struct omap_volt_vc_data vc_config = {
-	.vdd0_on = 1350000,	/* 1.35v */
-	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 750000,	/* 0.75v */
-	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1100000,	/* 1.1v */
-	.vdd1_onlp = 1100000,	/* 1.1v */
-	.vdd1_ret = 750000,	/* 0.75v */
-	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1100000,	/* 1.1v */
-	.vdd2_onlp = 1100000,	/* 1.1v */
-	.vdd2_ret = 750000,	/* .75v */
-	.vdd2_off = 0,		/* 0 v */
-};
-
-static struct omap_volt_vc_data vc_config_old = {
-	.vdd0_on = 1350000,	/* 1.35v */
-	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 837500,	/* 0.837500v */
-	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1100000,	/* 1.1v */
-	.vdd1_onlp = 1100000,	/* 1.1v */
-	.vdd1_ret = 837500,	/* 0.837500v */
-	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1100000,	/* 1.1v */
-	.vdd2_onlp = 1100000,	/* 1.1v */
-	.vdd2_ret = 837500,	/* .837500v */
-	.vdd2_off = 0,		/* 0 v */
+	.vdd0_on	= 1380000,	/* 1.38v  */
+	.vdd0_onlp	= 1025000,	/* 1.025v */
+	.vdd0_ret	=  750000,	/* 0.75v  */
+	.vdd0_off	=	0,	/* 0 v    */
+	.vdd1_on	= 1375000,	/* 1.375v */
+	.vdd1_onlp	=  950000,	/* 0.95v  */
+	.vdd1_ret	=  750000,	/* 0.75v  */
+	.vdd1_off	=	0,	/* 0 v    */
+	.vdd2_on	= 1127000,	/* 1.127v */
+	.vdd2_onlp	=  962000,	/* 0.962v */
+	.vdd2_ret	=  750000,	/* 0.75v  */
+	.vdd2_off	=	0,	/* 0 v    */
 };
 
 static void plat_hold_wakelock(void *up, int flag)
@@ -1846,7 +1835,8 @@ static void __init omap_44xxtablet_init(void)
 
 	omap_emif_setup_device_details(&emif_devices, &emif_devices);
 	omap_init_emif_timings();
-
+	omap_init_board_version(0);
+	omap4_create_board_props();
 	enable_rtc_gpio();
 	omap4_audio_conf();
 	tablet_i2c_init();
@@ -1922,11 +1912,10 @@ static void __init omap_44xxtablet_init(void)
 	if (cpu_is_omap446x())
 		omap_voltage_init_vc(&vc446x_config);
 	else {
-		if (omap_rev() <= OMAP4430_REV_ES2_1) {
-			omap_voltage_init_vc(&vc_config_old);
-		} else {
-			omap_voltage_init_vc(&vc_config);
-		}
+		if (omap_rev() <= OMAP4430_REV_ES2_1)
+			omap_voltage_init_vc(&vc443x_config_old);
+		else
+			omap_voltage_init_vc(&vc443x_config);
 	}
 }
 

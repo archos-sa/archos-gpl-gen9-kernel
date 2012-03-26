@@ -1949,6 +1949,12 @@ enum nldr_loadtype node_get_load_type(struct node_object *hnode)
  */
 u32 node_get_timeout(struct node_object *hnode)
 {
+#if 1
+	/*
+	 * utimeout from hnode are too small (1sec)
+	 */
+	return 3000;
+#else
 	DBC_REQUIRE(refs > 0);
 	DBC_REQUIRE(hnode);
 	if (!hnode) {
@@ -1957,6 +1963,7 @@ u32 node_get_timeout(struct node_object *hnode)
 	} else {
 		return hnode->utimeout;
 	}
+#endif
 }
 
 /*

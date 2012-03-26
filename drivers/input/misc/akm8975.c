@@ -97,6 +97,8 @@ static atomic_t suspend_flag = ATOMIC_INIT(0);
 
 static struct akm8975_platform_data *pdata;
 
+static bool power_enabled;
+
 static int AKI2C_RxData(char *rxData, int length)
 {
 	uint8_t loop_i;
@@ -728,6 +730,30 @@ WORK_FUNC_END:
 	AKMFUNC("akm8975_work_func");
 }
 
+static void akm8975_enable(bool en)
+{
+	if (power_enabled == en)
+		return;
+
+	if (en) {
+		if (!IS_ERR(compass_1v8)) {
+			regulator_enable(compass_1v8);
+		}
+		if (!IS_ERR(compass_vcc)) {
+			regulator_enable(compass_vcc);
+		}
+	} else {
+		if (!IS_ERR(compass_1v8)) {
+			regulator_disable(compass_1v8);
+		}
+		if (!IS_ERR(compass_vcc)) {
+			regulator_disable(compass_vcc);
+		}
+	}
+
+	power_enabled = en;
+}
+
 static irqreturn_t akm8975_interrupt(int irq, void *dev_id)
 {
 	struct akm8975_data *data = dev_id;
@@ -790,7 +816,45 @@ static struct miscdevice akm_aot_device = {
 };
 
 /*********************************************/
-int akm8975_probe(struct i2c_client *client, const struct i2c_device_id *id)
+
+#ifdef CONFIG_PM
+
+static int akm8975_suspend(struct i2c_client *client, pm_message_t mesg)
+{
+	if (power_enabled) {
+		if (!IS_ERR(compass_1v8)) {
+			regulator_disable(compass_1v8);
+		}
+		if (!IS_ERR(compass_vcc)) {
+			regulator_disable(compass_vcc);
+		}
+	}
+
+	return 0;
+}
+
+static int akm8975_resume(struct i2c_client *client)
+{
+	if (power_enabled) {
+		if (!IS_ERR(compass_1v8)) {
+			regulator_enable(compass_1v8);
+		}
+		if (!IS_ERR(compass_vcc)) {
+			regulator_enable(compass_vcc);
+		}
+	}
+
+	return 0;
+}
+
+#else
+
+#define akm8975_suspend		NULL
+#define akm8975_resume		NULL
+
+#endif /* CONFIG_PM */
+
+static int akm8975_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct akm8975_data *akm;
 	int err = 0;
@@ -828,13 +892,12 @@ int akm8975_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	compass_1v8 = regulator_get(&client->dev, "COMPASS_1V8");
 	if (IS_ERR(compass_1v8))
 		dev_dbg(&client->dev, "no COMPASS_1V8 for this compass\n");
-	else
-		regulator_enable(compass_1v8);
+
 	compass_vcc = regulator_get(&client->dev, "COMPASS_VCC");
 	if (IS_ERR(compass_vcc))
 		dev_dbg(&client->dev, "no COMPASS_VCC for this compass\n");
-	else
-		regulator_enable(compass_vcc);
+
+	akm8975_enable(true);
 
 	/* Check connection */
 	err = AKECS_CheckDevice();
@@ -975,14 +1038,15 @@ static int akm8975_remove(struct i2c_client *client)
 	misc_deregister(&akmd_device);
 	input_unregister_device(akm->input_dev);
 	free_irq(client->irq, akm);
+	akm8975_enable(false);
+
 	if (!IS_ERR(compass_1v8)) {
-		regulator_disable(compass_1v8);
 		regulator_put(compass_1v8);
 	}
 	if (!IS_ERR(compass_vcc)) {
-		regulator_disable(compass_vcc);
 		regulator_put(compass_vcc);
 	}
+
 	kfree(akm);
 	AKMDBG("successfully removed.");
 	return 0;
@@ -994,6 +1058,8 @@ static const struct i2c_device_id akm8975_id[] = {
 };
 
 static struct i2c_driver akm8975_driver = {
+	.suspend	= akm8975_suspend,
+	.resume 	= akm8975_resume,
 	.probe		= akm8975_probe,
 	.remove 	= akm8975_remove,
 	.id_table	= akm8975_id,

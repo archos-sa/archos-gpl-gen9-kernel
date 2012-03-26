@@ -266,6 +266,10 @@
 #define ACCEDR1				0x0A
 #define ACCSIHCTRL			0x0B
 
+/* Wait for a disconnect interrupt to be passed to the musb_core
+ * before shutting down the phy */
+#define OTG_DISCONNECT_TIMEOUT 500
+
 enum linkstat {
 	USB_LINK_UNKNOWN = 0,
 	USB_LINK_NONE,
@@ -672,6 +676,7 @@ static void archos_twl4030_linkstate_worker(struct work_struct *work)
 {
 	struct archos_twl4030_usb *twl = container_of(work, struct archos_twl4030_usb, work);
 	int linkstat = twl->linkstat;
+	int timeout = 0;
 	
 	spin_lock_irq(&twl->lock);
 	if (linkstat == USB_LINK_ID) {
@@ -729,12 +734,17 @@ static void archos_twl4030_linkstate_worker(struct work_struct *work)
 						twl->otg.gadget);
 			}
 
-			/* Hack!!! If the driver is not waiting
-			 * 100ms at this point and turns off the phy
-			 * then DISCONNECT interrupt will not be
-			 * reached to mentor
+			/* Workaround to prevent shutting off the phy before
+			 * the musb disconect irq can be passed to the musb_core.
 			 */
-			msleep(100);
+			while ((timeout++ < OTG_DISCONNECT_TIMEOUT) &&
+					(twl->otg.event != USB_EVENT_NONE)) {
+				msleep(1);
+			}
+			if (timeout == OTG_DISCONNECT_TIMEOUT)
+				printk("OTG Disconnect timed out\n");
+			else
+				printk("OTG Disconnect passed\n");
 			archos_twl4030_link_force_active(twl, 0);
 			archos_twl4030_phy_suspend(twl, 0);
 		} else {

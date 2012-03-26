@@ -7,6 +7,7 @@
  *
  */
 
+#define DEBUG
 #include <linux/capability.h>
 #include <linux/device.h>
 #include <linux/module.h>
@@ -533,6 +534,8 @@ _request_firmware(const struct firmware **firmware_p, const char *name,
 
 	if (!firmware_p)
 		return -EINVAL;
+
+	printk("%s:%s\n", __func__, name);
 
 	*firmware_p = firmware = kzalloc(sizeof(*firmware), GFP_KERNEL);
 	if (!firmware) {

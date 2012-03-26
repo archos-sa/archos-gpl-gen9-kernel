@@ -492,6 +492,9 @@ static void isp_enable_interrupts(struct device *dev)
 	if (CCDC_PREV_CAPTURE(isp))
 		irq0enable |= IRQ0ENABLE_PRV_DONE_IRQ;
 
+	if (CCDC_RESZ_CAPTURE(isp))
+		irq0enable |= IRQ0ENABLE_RSZ_DONE_IRQ;
+
 	if (CCDC_PREV_RESZ_CAPTURE(isp))
 		irq0enable |= IRQ0ENABLE_PRV_DONE_IRQ | IRQ0ENABLE_RSZ_DONE_IRQ;
 
@@ -521,6 +524,9 @@ static void isp_disable_interrupts(struct device *dev)
 
 	if (CCDC_PREV_CAPTURE(isp))
 		irq0enable &= ~IRQ0ENABLE_PRV_DONE_IRQ;
+
+	if (CCDC_RESZ_CAPTURE(isp))
+		irq0enable &= ~IRQ0ENABLE_RSZ_DONE_IRQ;
 
 	if (CCDC_PREV_RESZ_CAPTURE(isp))
 		irq0enable &= ~(IRQ0ENABLE_PRV_DONE_IRQ
@@ -997,7 +1003,7 @@ static irqreturn_t isp_isr(int irq, void *_pdev)
 		if (irqstatus & CSIA)
 			isp_csi2_isr(&isp->isp_csi2);
 
-		if (!(irqstatus & RESZ_DONE) || CCDC_PREV_RESZ_CAPTURE(isp))
+		if (!(irqstatus & RESZ_DONE) || CCDC_PREV_RESZ_CAPTURE(isp) || CCDC_RESZ_CAPTURE(isp))
 			goto out_ignore_buff;
 	case 0:
 		break;
@@ -1062,7 +1068,7 @@ static irqreturn_t isp_isr(int irq, void *_pdev)
 				RESZ_DONE,
 				irqdis->isp_callbk_arg1[CBK_RESZ_DONE],
 				irqdis->isp_callbk_arg2[CBK_RESZ_DONE]);
-		else if (CCDC_PREV_RESZ_CAPTURE(isp)) {
+		else if (CCDC_PREV_RESZ_CAPTURE(isp) || CCDC_RESZ_CAPTURE(isp)) {
 			isp_buf_process(dev, bufs);
 		}
 	}
@@ -1080,6 +1086,16 @@ static irqreturn_t isp_isr(int irq, void *_pdev)
 	if (irqstatus & CCDC_VD0) {
 		if (CCDC_CAPTURE(isp))
 			isp_buf_process(dev, bufs);
+		else if (CCDC_RESZ_CAPTURE(isp)) {
+			if (ispresizer_busy(&isp->isp_res)) {
+				buf->vb_state = VIDEOBUF_ERROR;
+				dev_dbg(dev, "resizer busy.\n");
+			} else if (!ISP_BUFS_IS_EMPTY(bufs)) {
+				ispresizer_config_shadow_registers(
+					&isp->isp_res);
+				ispresizer_enable(&isp->isp_res, 1);
+			}
+		}
 
 		/* Enabling configured statistic modules */
 		if (!(irqstatus & H3A_AWB_DONE))
@@ -1325,7 +1341,10 @@ static u32 isp_tmp_buf_alloc(struct device *dev, struct isp_pipeline *pipe)
 	isp->tmp_buf = da;
 	isp->tmp_buf_size = size;
 
-	isppreview_set_outaddr(&isp->isp_prev, isp->tmp_buf);
+	if (CCDC_RESZ_CAPTURE(isp))
+		ispccdc_set_outaddr(&isp->isp_ccdc, isp->tmp_buf);
+	else
+		isppreview_set_outaddr(&isp->isp_prev, isp->tmp_buf);
 	ispresizer_set_inaddr(&isp->isp_res, isp->tmp_buf, NULL);
 
 	return 0;
@@ -1409,6 +1428,9 @@ static int __isp_disable_modules(struct device *dev, int suspend)
 		}
 		msleep(1);
 	}
+
+	/* Disable the resizer (the resizer may be in continuous mode) */ 
+	ispresizer_enable(&isp->isp_res, 0);
 
 	/* Let's stop CCDC now. */
 	ispccdc_enable(&isp->isp_ccdc, 0);
@@ -1552,7 +1574,7 @@ static void isp_set_buf(struct device *dev, struct isp_buf *buf)
 		isp_csi2_ctx_config_ping_addr(&isp->isp_csi2, 0, buf->isp_addr);
 		isp_csi2_ctx_config_pong_addr(&isp->isp_csi2, 0, buf->isp_addr);
 		isp_csi2_ctx_update(&isp->isp_csi2, 0, false);
-	} else if (CCDC_PREV_RESZ_CAPTURE(isp))
+	} else if (CCDC_PREV_RESZ_CAPTURE(isp)|| CCDC_RESZ_CAPTURE(isp))
 		ispresizer_set_outaddr(&isp->isp_res, buf->isp_addr);
 	else if (CCDC_PREV_CAPTURE(isp))
 		isppreview_set_outaddr(&isp->isp_prev, buf->isp_addr);
@@ -1638,7 +1660,23 @@ static int isp_try_pipeline(struct device *dev,
 		} else if (pix_input->pixelformat == V4L2_PIX_FMT_YUYV ||
 			   pix_input->pixelformat == V4L2_PIX_FMT_UYVY) {
 			pipe->ccdc_in = CCDC_YUV_SYNC;
-			pipe->ccdc_out = CCDC_OTHERS_MEM;
+			/*
+			 * Temporary WA: switching from the CCDC -> RESIZER -> MEMORY
+			 * path to the CCDC -> MEMORY path leads to IOMMU errors.
+			 * So for now, the path always includes the resizer.
+			 */
+			//if (pix_output->width == pix_input->width && pix_output->height == pix_input->height) { 
+			if (0) { 
+				pipe->ccdc_out = CCDC_OTHERS_MEM;
+			} else {
+				/*
+				 * Use the temporary buffer hack since "on the fly"
+				 * resize does not seem to work well (huge latency)
+				 */
+				pipe->modules |= OMAP_ISP_RESIZER;
+				pipe->ccdc_out = CCDC_OTHERS_MEM;
+				pipe->rsz.in.path = RSZ_MEM_YUV;
+			}
 		} else
 			return -EINVAL;
 	}
@@ -1720,21 +1758,31 @@ static int isp_try_pipeline(struct device *dev,
 		pipe->rsz.out.image.width = wanted_width;
 		pipe->rsz.out.image.height = wanted_height;
 
-		if (pipe->rsz.in.path == RSZ_OTFLY_YUV) {
-			pipe->rsz.in.image.width =
-				pipe->prv.out.crop.width;
-			pipe->rsz.in.image.height =
-				pipe->prv.out.crop.height;
+		if (pipe->modules & OMAP_ISP_PREVIEW) {
+			if (pipe->rsz.in.path == RSZ_OTFLY_YUV) {
+				pipe->rsz.in.image.width =
+					pipe->prv.out.crop.width;
+				pipe->rsz.in.image.height =
+					pipe->prv.out.crop.height;
+			} else {
+				pipe->rsz.in.image.width = pipe->prv.out.image.width;
+				pipe->rsz.in.image.height = pipe->prv.out.image.height;
+			}
 		} else {
-			pipe->rsz.in.image.width = pipe->prv.out.image.width;
-			pipe->rsz.in.image.height = pipe->prv.out.image.height;
+			pipe->rsz.in.image.width = pipe->ccdc_out_w_img;
+			pipe->rsz.in.image.height = pipe->ccdc_out_h;
 		}
 		pipe->rsz.in.image.pixelformat = pix_output->pixelformat;
 		pipe->rsz.in.image.bytesperline = pix_output->bytesperline;
 
 		pipe->rsz.in.crop.left = pipe->rsz.in.crop.top = 0;
-		pipe->rsz.in.crop.width = pipe->prv.out.crop.width;
-		pipe->rsz.in.crop.height = pipe->prv.out.crop.height;
+		if (pipe->modules & OMAP_ISP_PREVIEW) {
+			pipe->rsz.in.crop.width = pipe->prv.out.crop.width;
+			pipe->rsz.in.crop.height = pipe->prv.out.crop.height;
+		} else {
+			pipe->rsz.in.crop.width = pipe->ccdc_out_w_img;
+			pipe->rsz.in.crop.height = pipe->ccdc_out_h;
+		}
 
 		rval = ispresizer_try_pipeline(&isp->isp_res, &pipe->rsz);
 		if (rval) {
@@ -2100,8 +2148,9 @@ int isp_vbq_setup(struct device *dev, struct videobuf_queue *vbq,
 {
 	struct isp_device *isp = dev_get_drvdata(dev);
 
-	if (CCDC_PREV_RESZ_CAPTURE(isp) &&
-		isp->revision <= ISP_REVISION_2_0)
+	if ((CCDC_PREV_RESZ_CAPTURE(isp) &&
+		isp->revision <= ISP_REVISION_2_0) ||
+		CCDC_RESZ_CAPTURE(isp))
 		return isp_tmp_buf_alloc(dev, &isp->pipeline);
 
 	return 0;
@@ -2867,8 +2916,7 @@ int isp_put(void)
 	if (isp->ref_count) {
 		if (--isp->ref_count == 0) {
 			isp_save_ctx(&pdev->dev);
-			if (isp->revision <= ISP_REVISION_2_0)
-				isp_tmp_buf_free(&pdev->dev);
+			isp_tmp_buf_free(&pdev->dev);
 			isp_release_resources(&pdev->dev);
 			isp_disable_clocks(&pdev->dev);
 		}

@@ -294,14 +294,21 @@ static int omap_hsi_wakeup_disable(int hsi_port)
 *
 * @od - reference to the hsi omap_device.
 *
+* Return value : Passes the value returned by _omap_hwmod_idle
+*
 * Note : a "normal" .deactivate_func shall be omap_device_idle_hwmods()
 */
 static int hsi_idle_hwmod(struct omap_device *od)
 {
+	int err;
 	/* HSI omap_device only contain one od->hwmods[0], so no need to */
 	/* loop for all hwmods */
-	_omap_hwmod_idle(od->hwmods[0]);
-	return 0;
+	err = _omap_hwmod_idle(od->hwmods[0]);
+
+	if (err < 0)
+		dev_err(&od->pdev.dev, "Cannot idle HSI hwmod\n");
+
+	return err;
 }
 
 /**
@@ -311,14 +318,22 @@ static int hsi_idle_hwmod(struct omap_device *od)
 *
 * @od - reference to the hsi omap_device.
 *
+* Return value : Passes the value returned by _omap_hwmod_enable
+*
 * Note : a "normal" .activate_func shall be omap_device_enable_hwmods()
 */
 static int hsi_enable_hwmod(struct omap_device *od)
 {
+	int err;
+
 	/* HSI omap_device only contain one od->hwmods[0], so no need to */
 	/* loop for all hwmods */
-	_omap_hwmod_enable(od->hwmods[0]);
-	return 0;
+	return _omap_hwmod_enable(od->hwmods[0]);
+
+	if (err < 0)
+		dev_err(&od->pdev.dev, "Cannot idle HSI hwmod\n");
+
+	return err;
 }
 
 /**
@@ -355,7 +370,7 @@ int omap_hsi_io_wakeup_check(void)
 	int hsi_port, ret = -1;
 
 	/* Modem HSI wakeup */
-	if (omap_hsi_is_io_wakeup_from_hsi(&hsi_port))
+	if (omap_hsi_is_io_wakeup_from_hsi(&hsi_port) > 0)
 		ret = omap_hsi_wakeup(hsi_port);
 
 	return ret;

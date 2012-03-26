@@ -19,5 +19,6 @@ extern const struct lpddr2_timings timings_elpida_333_mhz;
 extern const struct lpddr2_timings timings_elpida_400_mhz;
 extern const struct lpddr2_min_tck min_tck_elpida;
 extern struct lpddr2_device_info elpida_2G_S4;
+extern struct lpddr2_device_info elpida_4G_S4;
 
 #endif

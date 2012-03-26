@@ -37,7 +37,8 @@ MODULE_LICENSE("GPL");
 #define MANUFACTURER_ID			0x7FA2
 #define PRODUCT_ID			0x7673
 
-#define I2C_RETRY_COUNT                 (5)
+#define I2C_RETRY_COUNT			(5)
+#define POWER_UP_RETRY_COUNT		(5)
 
 
 /*
@@ -1803,6 +1804,7 @@ static int ioctl_s_power(struct v4l2_int_device *s, enum v4l2_power on)
 {
 	struct ov7675_decoder *decoder = s->priv;
 	int err = 0;
+	int retry = 0;
 
 	switch (on) {
 	case V4L2_POWER_OFF:
@@ -1823,29 +1825,42 @@ static int ioctl_s_power(struct v4l2_int_device *s, enum v4l2_power on)
 //		break;
 
 	case V4L2_POWER_ON:
-		if ((decoder->pdata->power_set) &&
-				(decoder->state == STATE_NOT_DETECTED)) {
-			/* Power Up Sequence */
-			/* Enable mux for OV7675 sensor data path */
-			err = decoder->pdata->power_set(s, on);
+		if (decoder->state == STATE_NOT_DETECTED) {
+			do {
+				/* Power Up Sequence */
+				/* Enable mux for OV7675 sensor data path */
+				if (decoder->pdata->power_set)
+					err = decoder->pdata->power_set(s, on);
 
-			/* Enable sensor clock */
-			if (decoder->pdata->set_xclk)
-				err |= decoder->pdata->set_xclk(s, xclk_current);
-
-			/* Wait a little before any I2C access (OV datasheet says 1 ms) */
-			msleep(10);
-
-			/* Detect the sensor */
-			err |= ov7675_detect(decoder->client);
-			if (err) {
-				v4l_err(decoder->client,
-						"Unable to detect decoder\n");
-				/* Disable sensor clock */
+				/* Enable sensor clock */
 				if (decoder->pdata->set_xclk)
-					err = decoder->pdata->set_xclk(s, 0);
-				return err;
-			}
+					err |= decoder->pdata->set_xclk(s, xclk_current);
+
+				/* Wait a little before any I2C access (OV datasheet says 1 ms) */
+				msleep(10);
+
+				/* Detect the sensor */
+				err |= ov7675_detect(decoder->client);
+				if (err) {
+					v4l_err(decoder->client,
+							"Unable to detect decoder\n");
+					/* Disable sensor clock */
+					if (decoder->pdata->set_xclk)
+						err |= decoder->pdata->set_xclk(s, 0);
+					
+					/* Power Down Sequence */
+					/* Disable mux for OV7675 sensor data path */
+					if (decoder->pdata->power_set)
+						err |= decoder->pdata->power_set(s, V4L2_POWER_OFF);
+
+					if (retry < POWER_UP_RETRY_COUNT) {
+						v4l_warn(decoder->client, "ioctl_s_power: retry ... %d, err = %d\n", retry, err);
+						retry++;
+						msleep_interruptible(100);
+					} else
+						return err;
+				}
+			} while (err);
 			err |= ov7675_init(decoder->client);
 		}
 		// A little delay is needed to get a good first frame.

@@ -38,6 +38,16 @@ static char command_line[][COMMAND_LINE_SIZE] __initdata = {
 #else
 	[4] = "",
 #endif
+#ifdef CONFIG_CMDLINE_A70S2
+	[5] = CONFIG_CMDLINE_A70S2,
+#else
+	[5] = "",
+#endif
+#ifdef CONFIG_CMDLINE_A70H2
+	[6] = CONFIG_CMDLINE_A70H2,
+#else
+	[6] = "",
+#endif
 };
 
 void __init fixup_archos(struct machine_desc *desc,
@@ -54,6 +64,10 @@ void __init fixup_archos(struct machine_desc *desc,
 		*cmdline = command_line[3];
 	} else if (machine_is_archos_a101it()) {
         	*cmdline = command_line[4];
+	} else if (machine_is_archos_a70s2()) {
+		*cmdline = command_line[5];
+	} else if (machine_is_archos_a70h2()) {
+		*cmdline = command_line[6];
 	} else {
 		printk("%s : NO COMMAND LINE FOUND!", __func__);
 		return;

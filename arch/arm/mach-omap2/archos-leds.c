@@ -14,6 +14,7 @@
 #include <linux/err.h>
 #include <linux/module.h>
 #include <linux/leds.h>
+#include <linux/delay.h>
 
 #include <plat/display.h>
 #include <linux/regulator/machine.h>
@@ -60,6 +61,9 @@ static struct platform_device board_backlight_device = {
 
 static void bkl_set_pad(struct omap_pwm_led_platform_data *self, int on_off)
 {
+
+	pr_debug("%s: on_off:%d\n", __func__, on_off);
+
 	if (on_off == 0) {
 		if (self->invert)
 			omap_mux_init_signal(backlight_led_pwm.signal_off,
@@ -87,6 +91,11 @@ static void bkl_set_power(struct omap_pwm_led_platform_data *self, int on_off)
 	if (gpio_is_valid(bkl_power_gpio))
 		gpio_set_value( bkl_power_gpio, on_off );
 
+#if 1
+	// enable this fixed backlight startup for A100 on low level
+	// but could generate a little white flash at start
+	msleep(1);
+#endif
 }
 
 static void bkl_set_power_initial(struct omap_pwm_led_platform_data *self)

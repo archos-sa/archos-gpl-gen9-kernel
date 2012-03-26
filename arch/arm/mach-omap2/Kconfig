@@ -182,6 +182,18 @@ config MACH_ARCHOS_A35DECT
 	select OMAP_PACKAGE_CBP
 	select MACH_ARCHOS
 	
+config MACH_ARCHOS_A70S2
+	bool "Archos A70V2 board"
+	depends on ARCH_OMAP3
+	select OMAP_PACKAGE_CBP
+	select MACH_ARCHOS
+
+config MACH_ARCHOS_A70H2
+	bool "Archos A70V2 board"
+	depends on ARCH_OMAP3
+	select OMAP_PACKAGE_CBP
+	select MACH_ARCHOS
+
 config MACH_ARCHOS
 	bool 
 	default n
@@ -206,6 +218,16 @@ config CMDLINE_PANDA
 	depends on MACH_ARCHOS
 	default ""
 	
+config CMDLINE_A70S2
+	string "Kernel command line for Archos A70S V2"
+	depends on ARCH_OMAP3 && MACH_ARCHOS
+	default ""
+
+config CMDLINE_A70H2
+	string "Kernel command line for Archos A70H V2"
+	depends on ARCH_OMAP3 && MACH_ARCHOS
+	default ""
+
 config CMDLINE_G8
 	string "Kernel command line for Archos G8"
 	depends on ARCH_OMAP3 && MACH_ARCHOS
@@ -412,6 +434,24 @@ config OMAP4_DPLL_CASCADING
 	  Select this option to allow OMAP4 driving the whole clock tree from
 	  a single DPLL output clock. This is power conserving but might break
 	  some drivers. 
+
+config OMAP4_HSOTG_ED_CORRECTION
+	bool "OMAP 44XX HSOTG Eye diagram correction"
+	depends on ARCH_OMAP4
+	default y
+	help
+	  Select this option to overrive HSOTG PHY settings in
+	  order to improve Eye Diagramm. On 4430 CPUs this should
+	  improve Eye Diagram at least 8%.
+
+config OMAP4_HSOTG_ED_SW2_4460
+	bool "Override SWCAP value for 4460 CPUs"
+	depends on OMAP4_HSOTG_ED_CORRECTION
+	default n
+	help
+	  Select this option for override SWCAP trim code in USBPHY_USB2PHYCM_TRIM
+	  register HSOTG PHY. Override value: 0x24. This should be done on boadrs
+	  with high parasitics in order to improve Eye Diagram.
 
 config OMAP4_TPS62361
 	bool "OMAP4460 MPU power supply PMIC"

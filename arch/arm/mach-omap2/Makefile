@@ -194,6 +194,8 @@ obj-$(CONFIG_MACH_OMAP3_TOUCHBOOK)	+= board-omap3touchbook.o \
 					   hsmmc.o
 obj-$(CONFIG_MACH_OMAP_BLAZE)		+= board-44xxtablet.o \
 					   omap_phy_internal.o \
+					   board-44xx-identity.o \
+					   omap4_apps_brd_id.o \
 					   hsmmc.o
 obj-$(CONFIG_MACH_ARCHOS_A43)		+= board-archos-a43.o \
 					   archos-lcd-lg-fwvga43.o \
@@ -230,6 +232,8 @@ obj-$(CONFIG_MACH_ARCHOS_A101S)		+= board-archos-a101s.o \
 					   archos-audio-twl6040.o \
 					   archos-camera-mt9m114.o \
 					   archos-touchscreen-pixcir-10.o \
+					   archos-touchscreen-tr16c0-8.o \
+					   archos-touchscreen-cpt-10.o \
 					   archos-compass.o
 
 obj-$(CONFIG_MACH_ARCHOS_A101H)		+= board-archos-a101h.o \
@@ -237,6 +241,8 @@ obj-$(CONFIG_MACH_ARCHOS_A101H)		+= board-archos-a101h.o \
 					   archos-lcd-auo-wxga10.o \
 					   archos-audio-twl6040.o \
 					   archos-touchscreen-pixcir-10.o \
+					   archos-touchscreen-tr16c0-8.o \
+					   archos-touchscreen-cpt-10.o \
 					   archos-compass.o \
 					   archos-usb-musb.o
 
@@ -251,6 +257,16 @@ obj-$(CONFIG_MACH_ARCHOS_A35DM)		+= board-archos-a35dm.o \
 obj-$(CONFIG_MACH_ARCHOS_A35DECT)	+= board-archos-a35dect.o \
 					   archos-lcd-a35.o
 					   
+obj-$(CONFIG_MACH_ARCHOS_A70S2)		+= board-archos-a70s2.o \
+					   archos-touchscreen-goodix-7.o \
+					   archos-touchscreen-tr16c0-8.o \
+					   archos-lcd-claa-wsvga7.o \
+					   archos-camera-ov7675.o
+
+obj-$(CONFIG_MACH_ARCHOS_A70H2)		+= board-archos-a70h2.o \
+					   archos-lcd-claa-wsvga7.o \
+					   archos-camera-ov7675.o
+
 obj-$(CONFIG_MACH_ARCHOS)		+= archos-audio-wm8988.o \
 					   hsmmc.o \
 					   archos-leds.o \
@@ -270,8 +286,10 @@ obj-$(CONFIG_MACH_ARCHOS)		+= archos-audio-wm8988.o \
 
 obj-$(CONFIG_MACH_OMAP_4430SDP)		+= board-4430sdp.o \
 					   omap_phy_internal.o \
-					   hsmmc.o board-4430sdp-wifi.o
-
+					   board-4430sdp-wifi.o \
+					   board-44xx-identity.o \
+					   omap4_apps_brd_id.o \
+					   hsmmc.o
 obj-$(CONFIG_MACH_OMAP4_PANDA)		+= board-omap4panda.o \
 					   omap_phy_internal.o \
 					   hsmmc.o

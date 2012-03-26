@@ -674,7 +674,8 @@ static inline void set_24xx_gpio_triggering(struct gpio_bank *bank, int gpio,
 	}
 	if (likely(!(bank->non_wakeup_gpios & gpio_bit))) {
 		if (cpu_is_omap44xx()) {
-			MOD_REG_BIT(OMAP4_GPIO_IRQWAKEN0, gpio_bit, trigger);
+			MOD_REG_BIT(OMAP4_GPIO_IRQWAKEN0, gpio_bit,
+				trigger != 0);
 		} else {
 			/*
 			 * GPIO wakeup request can only be generated on edge
@@ -826,7 +827,7 @@ static int _set_gpio_triggering(struct gpio_bank *bank, int gpio, int trigger)
 	case METHOD_GPIO_24XX:
 	case METHOD_GPIO_44XX:
 		set_24xx_gpio_triggering(bank, gpio, trigger);
-		break;
+		return 0;
 #endif
 	default:
 		goto bad;
@@ -1348,8 +1349,11 @@ static void gpio_irq_shutdown(unsigned int irq)
 {
 	unsigned int gpio = irq - IH_GPIO_BASE;
 	struct gpio_bank *bank = get_irq_chip_data(irq);
+	unsigned long flags;
 
+	spin_lock_irqsave(&bank->lock, flags);
 	_reset_gpio(bank, gpio);
+	spin_unlock_irqrestore(&bank->lock, flags);
 }
 
 static void gpio_ack_irq(unsigned int irq)
@@ -1364,9 +1368,12 @@ static void gpio_mask_irq(unsigned int irq)
 {
 	unsigned int gpio = irq - IH_GPIO_BASE;
 	struct gpio_bank *bank = get_irq_chip_data(irq);
+	unsigned long flags;
 
+	spin_lock_irqsave(&bank->lock, flags);
 	_set_gpio_irqenable(bank, gpio, 0);
 	_set_gpio_triggering(bank, get_gpio_index(gpio), IRQ_TYPE_NONE);
+	spin_unlock_irqrestore(&bank->lock, flags);
 }
 
 static void gpio_unmask_irq(unsigned int irq)
@@ -1376,7 +1383,9 @@ static void gpio_unmask_irq(unsigned int irq)
 	unsigned int irq_mask = 1 << get_gpio_index(gpio);
 	struct irq_desc *desc = irq_to_desc(irq);
 	u32 trigger = desc->status & IRQ_TYPE_SENSE_MASK;
+	unsigned long flags;
 
+	spin_lock_irqsave(&bank->lock, flags);
 	if (trigger)
 		_set_gpio_triggering(bank, get_gpio_index(gpio), trigger);
 
@@ -1388,6 +1397,7 @@ static void gpio_unmask_irq(unsigned int irq)
 	}
 
 	_set_gpio_irqenable(bank, gpio, 1);
+	spin_unlock_irqrestore(&bank->lock, flags);
 }
 
 static struct irq_chip gpio_irq_chip = {
@@ -1676,6 +1686,8 @@ static void omap_gpio_mod_init(struct gpio_bank *bank)
 		if (cpu_is_omap44xx()) {
 			__raw_writel(0xffffffff, bank->base +
 					OMAP4_GPIO_IRQSTATUSCLR0);
+			__raw_writel(0xffffffff, bank->base +
+					OMAP4_GPIO_IRQSTATUSCLR1);
 			__raw_writel(0x00000000, bank->base +
 					 OMAP4_GPIO_DEBOUNCENABLE);
 			/* Initialize interface clk ungated, module enabled */
@@ -1953,13 +1965,20 @@ static int gpio_bank_runtime_suspend(struct device *dev)
 		__raw_writel(l1, bank->base + OMAP24XX_GPIO_FALLINGDETECT);
 		__raw_writel(l2, bank->base + OMAP24XX_GPIO_RISINGDETECT);
 	} else if (bank->method == METHOD_GPIO_44XX) {
+		u32 l1, l2;
 
 		bank->saved_datain = __raw_readl(bank->base +
 						OMAP4_GPIO_DATAIN);
-		bank->saved_fallingdetect = 
-			__raw_readl(bank->base + OMAP4_GPIO_FALLINGDETECT);
-		bank->saved_risingdetect = 
-			__raw_readl(bank->base + OMAP4_GPIO_RISINGDETECT);
+		l1 = __raw_readl(bank->base + OMAP4_GPIO_FALLINGDETECT);
+		l2 = __raw_readl(bank->base + OMAP4_GPIO_RISINGDETECT);
+
+		bank->saved_fallingdetect = l1;
+		bank->saved_risingdetect = l2;
+		l1 &= ~bank->enabled_non_wakeup_gpios;
+		l2 &= ~bank->enabled_non_wakeup_gpios;
+
+		__raw_writel(l1, bank->base + OMAP4_GPIO_FALLINGDETECT);
+		__raw_writel(l2, bank->base + OMAP4_GPIO_RISINGDETECT);
 	}
 
 	workaround_enabled = 1;
@@ -2027,7 +2046,6 @@ static int gpio_bank_runtime_resume(struct device *dev)
 		}
 	} else if (bank->method == METHOD_GPIO_44XX) {
 		u32 l, gen, gen0, gen1;
-		int n;
 
 		__raw_writel(bank->saved_fallingdetect,
 				 bank->base + OMAP4_GPIO_FALLINGDETECT);
@@ -2056,28 +2074,6 @@ static int gpio_bank_runtime_resume(struct device *dev)
 		gen = l & (~(bank->saved_fallingdetect) & ~(bank->saved_risingdetect));
 		/* Consider all GPIO IRQs needed to be updated */
 		gen |= gen0 | gen1;
-
-		/* Make sure that PAD wakeup flags generate EDGE IRQ by SW.
-		 * This should avoid the "horribly racy" situation described
-		 * above.
-		 */
-		for (n = 0; n < bank->chip.ngpio; n++) {
-			u16 padconf = 0;
-
-			/* skip PAD wakeup workaround for GPIO pins that
-			 * do not have wakeup enabled
-			 */
-			if (!(bank->enabled_non_wakeup_gpios & (1u << n)))
-				continue;
-
-			padconf = omap_mux_get_gpio(bank->chip.base + n);
-			if (padconf & OMAP44XX_PADCONF_WAKEUPEVENT0) {
-				gen |= (1u << n) & bank->saved_fallingdetect;
-				gen |= (1u << n) & bank->saved_risingdetect;
-				l |= (1u << n) & bank->saved_fallingdetect;
-				l |= (1u << n) & bank->saved_risingdetect;
-			}
-		}
 
 		if (gen) {
 			u32 old0, old1;
@@ -2286,7 +2282,7 @@ void omap2_gpio_prepare_for_idle(bool save_context)
 #if defined(CONFIG_PM_RUNTIME) && defined(CONFIG_ARCH_OMAP2PLUS)
 	int i;
 
-	for (i = 1; i < gpio_bank_count; i++) {
+	for (i = 0; i < gpio_bank_count; i++) {
 		struct gpio_bank *bank = &gpio_bank[i];
 		struct platform_device *pdev = to_platform_device(bank->dev);
 
@@ -2296,14 +2292,14 @@ void omap2_gpio_prepare_for_idle(bool save_context)
 		 */
 		if ((!bank->off_mode_support) || (!bank->mod_usage))
 			continue;
-		if (!cpu_is_omap44xx() || save_context)
+		if (cpu_is_omap44xx() || save_context)
 			gpio_bank_runtime_suspend(bank->dev);
 		if (save_context)
 			omap_gpio_save_context(bank->dev);
 		omap_device_idle(pdev);
 	}
 
-	if (save_context)
+	if (save_context && cpu_is_omap34xx())
 		omap3_gpio_save_pad_context();
 #endif
 }
@@ -2313,19 +2309,19 @@ void omap2_gpio_resume_after_idle(bool restore_context)
 #if defined(CONFIG_PM_RUNTIME) && defined(CONFIG_ARCH_OMAP2PLUS)
 	int i;
 
-	for (i = 1; i < gpio_bank_count; i++) {
+	for (i = 0; i < gpio_bank_count; i++) {
 		struct gpio_bank *bank = &gpio_bank[i];
 		if ((bank->off_mode_support) && (bank->mod_usage)) {
 			struct platform_device *pdev = to_platform_device(bank->dev);
 			omap_device_enable(pdev);
 			if (restore_context)
 				omap_gpio_restore_context(bank->dev);
-			if (!cpu_is_omap44xx() || restore_context)
+			if (cpu_is_omap44xx() || restore_context)
 				gpio_bank_runtime_resume(bank->dev);
 		}
 	}
 
-	if (restore_context)
+	if (restore_context && cpu_is_omap34xx())
 		omap3_gpio_restore_pad_context();
 
 	workaround_enabled = 0;

@@ -108,3 +108,13 @@ struct lpddr2_device_info elpida_2G_S4 = {
 	.density	= LPDDR2_DENSITY_2Gb,
 	.io_width	= LPDDR2_IO_WIDTH_32
 };
+
+struct lpddr2_device_info elpida_4G_S4 = {
+	.device_timings = {
+		&timings_elpida_400_mhz
+	},
+	.min_tck	= &min_tck_elpida,
+	.type		= LPDDR2_TYPE_S4,
+	.density	= LPDDR2_DENSITY_4Gb,
+	.io_width	= LPDDR2_IO_WIDTH_32
+};

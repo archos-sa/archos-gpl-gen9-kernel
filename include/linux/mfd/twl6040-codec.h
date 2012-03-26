@@ -132,15 +132,24 @@
 
 /* HSLCTL (0x10) fields */
 
+#define TWL6040_HSDACENAL		0x01
 #define TWL6040_HSDACMODEL		0x02
 #define TWL6040_HSDRVMODEL		0x08
-#define TWL6040_HSDACENAL		0x01
 
 /* HSRCTL (0x11) fields */
 
+#define TWL6040_HSDACENAR		0x01
 #define TWL6040_HSDACMODER		0x02
 #define TWL6040_HSDRVMODER		0x08
-#define TWL6040_HSDACENAR		0x01
+
+/* HFLCTL (0x14) fields */
+
+#define TWL6040_HFDACENAL		0x01
+
+/* HFRCTL (0x16) fields */
+
+#define TWL6040_HFDACENAR		0x01
+
 
 /* VIBCTLL (0x18) fields */
 

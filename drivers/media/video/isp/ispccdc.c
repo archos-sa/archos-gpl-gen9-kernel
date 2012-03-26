@@ -37,6 +37,7 @@
 #define PTR_FREE		((u32)(-ENOMEM))
 
 #define PHY_ADDRESS_ALIGN	32
+#define PHY_YUV_ADDRESS_ALIGN	16
 
 /* Structure for saving/restoring CCDC module registers*/
 static struct isp_reg ispccdc_reg_list[] = {
@@ -1019,8 +1020,13 @@ int ispccdc_try_pipeline(struct isp_ccdc_device *isp_ccdc,
 		pipe->ccdc_out_h -= 1;
 
 	pipe->ccdc_out_w_img = pipe->ccdc_out_w;
-	/* Round up to nearest 32 pixels. */
-	pipe->ccdc_out_w = ALIGN(pipe->ccdc_out_w, PHY_ADDRESS_ALIGN);
+	if (pipe->ccdc_in == CCDC_YUV_SYNC) {
+		/* Round up to nearest 16 pixels. */
+		pipe->ccdc_out_w = ALIGN(pipe->ccdc_out_w, PHY_YUV_ADDRESS_ALIGN);
+	} else {
+		/* Round up to nearest 32 pixels. */
+		pipe->ccdc_out_w = ALIGN(pipe->ccdc_out_w, PHY_ADDRESS_ALIGN);
+	}
 
 	isp_ccdc->lsc_request_enable = isp_ccdc->lsc_request_user;
 
@@ -1153,14 +1159,17 @@ void ispccdc_enable(struct isp_ccdc_device *isp_ccdc, u8 enable)
 			ispccdc_enable_lsc(isp_ccdc, 1);
 			return;
 		}
-		isp_reg_writel(dev, IRQ0ENABLE_CCDC_VD1_IRQ,
-			OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0STATUS);
-		isp_reg_or(dev, OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0ENABLE,
-			IRQ0ENABLE_CCDC_VD1_IRQ);
+		/*
+		 * Currently we do not use VD1, so no need to enable it.
+		 */
+		//isp_reg_writel(dev, IRQ0ENABLE_CCDC_VD1_IRQ,
+		//	OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0STATUS);
+		//isp_reg_or(dev, OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0ENABLE,
+		//	IRQ0ENABLE_CCDC_VD1_IRQ);
 	} else {
 		ispccdc_enable_lsc(isp_ccdc, 0);
-		isp_reg_and(dev, OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0ENABLE,
-			    ~IRQ0ENABLE_CCDC_VD1_IRQ);
+		//isp_reg_and(dev, OMAP3_ISP_IOMEM_MAIN, ISP_IRQ0ENABLE,
+		//	    ~IRQ0ENABLE_CCDC_VD1_IRQ);
 		isp_ccdc->lsc_request_enable = isp_ccdc->lsc_request_user;
 		isp_ccdc->lsc_enable = isp_ccdc->lsc_request_user;
 	}

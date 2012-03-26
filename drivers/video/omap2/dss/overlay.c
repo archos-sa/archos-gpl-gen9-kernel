@@ -157,7 +157,6 @@ static ssize_t overlay_input_size_store(struct omap_overlay *ovl,
 		if (r)
 			return r;
 	}
-
 	return size;
 }
 
@@ -217,6 +216,7 @@ static ssize_t overlay_output_size_store(struct omap_overlay *ovl,
 	ovl->get_overlay_info(ovl, &info);
 
 	out_width = simple_strtoul(buf, &last, 10);
+
 	++last;
 	if (last - buf >= size)
 		return -EINVAL;
@@ -225,9 +225,10 @@ static ssize_t overlay_output_size_store(struct omap_overlay *ovl,
 
 	if (sysfs_streq(ovl->manager->name, "tv")) {
 		if (ovl->manager->device->panel.timings.x_res < out_width ||
-		ovl->manager->device->panel.timings.y_res < out_height)
-		printk(KERN_ERR "TV does not support downscaling , Wrong output size");
-		return -EINVAL;
+			ovl->manager->device->panel.timings.y_res < out_height){
+			printk(KERN_ERR "TV does not support downscaling , Wrong output size");
+			return -EINVAL;
+		}
 	}
 
 	info.out_width = out_width;

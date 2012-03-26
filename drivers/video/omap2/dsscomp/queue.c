@@ -36,7 +36,7 @@
 /* free overlay structs */
 static LIST_HEAD(free_ois);
 
-#define QUEUE_SIZE	3
+#define QUEUE_SIZE	6
 
 #undef STRICT_CHECK
 
@@ -330,6 +330,36 @@ void dsscomp_release_active_comps()
 	}
 }
 
+void dsscomp_release_all_comps(void)
+{
+	int ix;
+	struct dsscomp_data *c, *c2;
+	for (ix = 0; ix < omap_dss_get_num_overlay_managers(); ix++) {
+		mutex_lock(&mgrq[ix].mtx);
+		list_for_each_entry_safe(c, c2, &mgrq[ix].q_ci, q) {
+			if (c) {
+				if (c->magic != MAGIC_APPLIED)
+					dsscomp_drop(c);
+			}
+		}
+		mutex_unlock(&mgrq[ix].mtx);
+	}
+}
+EXPORT_SYMBOL(dsscomp_release_all_comps);
+
+void dsscomp_release_same_comps(struct dsscomp_data *comp)
+{
+	struct dsscomp_data *c, *c2;
+	list_for_each_entry_safe(c, c2, &mgrq[comp->ix].q_ci, q) {
+		if (c && (c != comp)) {
+			if ((c->magic != MAGIC_APPLIED) && (c->magic != 0) && (comp->ovl_mask == c->ovl_mask)) {
+				dsscomp_drop(c);
+			}
+		}
+	}
+}
+EXPORT_SYMBOL(dsscomp_release_same_comps);
+
 void dsscomp_release_programmed_comps(int id)
 {
 	struct dsscomp_data *c, *c2;
@@ -428,8 +458,25 @@ int dsscomp_set_ovl(dsscomp_t comp, struct dss2_ovl_info *ovl)
 		} else {
 			/* check if ovl is free to use */
 			r = -EBUSY;
-			if (list_empty(&free_ois))
-				goto done;
+			if (list_empty(&free_ois)) {
+				// Damned this should not happen so recover
+				//First drop all compositions
+				for (i = 0; i < cdev->num_mgrs; i++) {
+					struct dsscomp_data *c, *c2;
+					list_for_each_entry_safe(c, c2, &mgrq[i].q_ci, q) {
+						dsscomp_drop(c);
+					}
+				}
+				//Reinitialize the free list
+				INIT_LIST_HEAD(&free_ois);
+				//And readd the free list with the comp table
+				for (i = 0; i < QUEUE_SIZE * cdev->num_ovls; i++) {
+				      list_add(&ois[i].q, &free_ois);
+				}
+				if (list_empty(&free_ois)) {
+				      goto done;
+				}
+			}
 
 			/* not in any other displays queue */
 			if (mask & ~mgrq[ix].ovl_qmask) {
@@ -512,7 +559,10 @@ EXPORT_SYMBOL(dsscomp_get_ovl);
 int dsscomp_get_first_ovl(dsscomp_t comp, struct dss2_ovl_info *ovl)
 {
 	int r = -EFAULT;
-	struct dss2_overlay *oi;
+	struct dss2_overlay *oi, *tmp;
+	struct dss2_ovl_info *ovl0, *ovl2;
+
+	ovl0 = ovl2 = NULL;
 
 	if (comp && ovl) {
 		dsscomp_t chkcomp;
@@ -526,10 +576,29 @@ int dsscomp_get_first_ovl(dsscomp_t comp, struct dss2_ovl_info *ovl)
 			r = -EACCES;
 		else {
 			if (!list_empty(&comp->ois)) {
-				r = 0;
-				oi = list_first_entry(&comp->ois,
-						typeof(*oi), q);
-				*ovl = oi->ovl;
+				if (cpu_is_omap44xx() || comp->frm.mgr.display_index == 0) {
+					r = 0;
+					oi = list_first_entry(&comp->ois,
+							typeof(*oi), q);
+					*ovl = oi->ovl;
+				} else {
+					/* OMAP3 and HDMI */
+					r = -EACCES;
+					list_for_each_entry_safe (oi, tmp, &comp->ois, q) {
+						if (!ovl0) ovl0 = &oi->ovl;
+						if (oi->ovl.cfg.ix == 2) ovl2 = &oi->ovl;
+					}
+
+					/* dirty HACK (omap3) : display ovl2 on hdmi when output is 640x480
+					   For hdmi certif */
+					if (ovl2 && ovl2->cfg.enabled && ovl2->cfg.width == 640 && ovl2->cfg.height == 480) {
+						r = 0;
+						*ovl = *ovl2;
+					} else if (ovl0) {
+						r = 0;
+						*ovl = *ovl0;
+					}
+				}
 			}
 		}
 		mutex_unlock(&mgrq[comp->ix].mtx);
@@ -663,7 +732,7 @@ void dsscomp_drop(dsscomp_t c)
 #endif
 			} else if (o->ovl.cfg.color_mode == OMAP_DSS_COLOR_UYVY) {
 #ifdef CONFIG_VIDEO_CMA
-				cma_set_buf_state(o->ovl.ba, CMABUF_FREE, -1);
+				cma_set_buf_state(o->ovl.ba, CMABUF_READY, -1);
 #endif
 			}
 		}
@@ -685,7 +754,7 @@ int dsscomp_apply(dsscomp_t comp)
 	u32 dmask, display_ix;
 	struct omap_dss_device *dssdev;
 	struct omap_dss_driver *drv;
-	struct omap_overlay_manager *mgr;
+	struct omap_overlay_manager *mgr = NULL;
 	struct omap_overlay *ovl;
 	struct dsscomp_setup_mgr_data *d;
 	struct dsscomp_data *c, *c2;
@@ -831,11 +900,11 @@ done_ovl:
 					d->win.y, d->win.w, d->win.h);
 		}
 	} else {
-		/* wait for sync to avoid tear */
-		r = mgr->apply(mgr);
-		if (!r)
-			mgr->wait_for_vsync(mgr);
-		else
+		/* wait until the changes done to the manager cache are
+		 * applied in the HW rather than just one vsync
+		 */
+		r = mgr->apply(mgr) ? : mgr->wait_for_go(mgr);
+		if (r)
 			dev_err(DEV(cdev), "failed while applying %d", r);
 
 		/* ignore this error if callback has already been registered */
@@ -861,80 +930,6 @@ done:
 	return r;
 }
 EXPORT_SYMBOL(dsscomp_apply);
-
-/*
- * ===========================================================================
- *		WAIT OPERATIONS
- * ===========================================================================
- */
-
-/* return true iff composition phase has passed */
-static bool is_wait_over(dsscomp_t comp, enum dsscomp_wait_phase phase)
-{
-	return IS_ERR(validate(comp)) ||
-		(phase == DSSCOMP_WAIT_PROGRAMMED &&
-			(comp->magic == MAGIC_PROGRAMMED ||
-			 comp->magic == MAGIC_DISPLAYED)) ||
-		(phase == DSSCOMP_WAIT_DISPLAYED &&
-			comp->magic == MAGIC_DISPLAYED) ||
-		(phase == DSSCOMP_WAIT_RELEASED &&
-			comp->magic == 0);
-}
-
-/* wait for programming or release of a composition */
-int dsscomp_wait(dsscomp_t comp, enum dsscomp_wait_phase phase, int timeout)
-{
-	u32 id;
-	dsscomp_t chkcomp;
-
-	if (!comp)
-		return -EINVAL;
-
-	mutex_lock(&mgrq[comp->ix].mtx);
-
-	chkcomp = validate(comp);
-	id = IS_ERR(chkcomp) ? 0 : comp->frm.sync_id;
-	if (debug & DEBUG_WAITS)
-		dev_info(DEV(cdev), "wait %s on [%08x]\n",
-			phase == DSSCOMP_WAIT_DISPLAYED ? "display" :
-			phase == DSSCOMP_WAIT_PROGRAMMED ? "program" :
-			"release", id);
-
-	if (!IS_ERR(comp) && !is_wait_over(comp, phase)) {
-		u32 ix = comp->frm.mgr.display_index;
-
-		mutex_unlock(&mgrq[comp->ix].mtx);
-
-		if (ix >= cdev->num_displays ||
-			!cdev->displays[ix] ||
-			!cdev->displays[ix]->manager)
-			return -EINVAL;
-
-		ix = cdev->displays[ix]->manager->id;
-		if (ix >= cdev->num_mgrs)
-			return -EINVAL;
-
-		/*
-		 * we can check being active without mutex because we will
-		 * also check it while holding the mutex before returning
-		 */
-		timeout = wait_event_interruptible_timeout(mgrq[ix].wq,
-			is_wait_over(comp, phase), timeout);
-		if (debug & DEBUG_WAITS)
-			dev_info(DEV(cdev), "wait over [%08x]: %s %d\n", id,
-				 timeout < 0 ? "signal" :
-				 timeout > 0 ? "ok" : "timeout",
-				 timeout);
-		if (timeout <= 0)
-			return timeout ? : -ETIME;
-		mutex_lock(&mgrq[ix].mtx);
-	}
-
-	mutex_unlock(&mgrq[comp->ix].mtx);
-
-	return 0;
-}
-EXPORT_SYMBOL(dsscomp_wait);
 
 /*
  * ===========================================================================

@@ -15,6 +15,7 @@ static struct clk *aux_clk;
 static int hub_pwron = UNUSED_GPIO;
 static int hub_rst = UNUSED_GPIO;
 static int husb1_pwron = UNUSED_GPIO;
+static int pwron_5v = UNUSED_GPIO;
 static bool suspended;
 
 int archos_ehci_bus_suspend(void) 
@@ -81,6 +82,9 @@ int archos_ehci_bus_disable(void)
 	if (hub_rst > 0)
 		gpio_set_value(hub_rst, 1);
 
+	if (pwron_5v > 0)
+		gpio_set_value(pwron_5v, 0);
+
 	return 0;
 }
 
@@ -112,6 +116,9 @@ int archos_ehci_bus_enable(void)
 	// XXX check ^^ timing
 	if (hub_rst > 0)
 		gpio_set_value(hub_rst, 0);
+
+	if (pwron_5v > 0)
+		gpio_set_value(pwron_5v, 1);
 
 	suspended = false;
 
@@ -361,6 +368,19 @@ void __init archos_omap4_ehci_init(void)
 		gpio_direction_output(husb1_pwron, 0);
 	}
 
+	// pwron_5v
+	if ((pwron_5v = cfg->enable_5v) > 0) {
+		ret = gpio_request(pwron_5v, "5V_USB");
+		if (ret) {
+			pr_err("Cannot request GPIO %d\n", hub_rst);
+			goto error;
+		}
+		omap_mux_init_gpio(pwron_5v, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
+
+		gpio_export(pwron_5v, false);
+		gpio_direction_output(pwron_5v, 0);
+	}
+
 	// go
 	init_ehci_clock_init();
 
@@ -376,6 +396,9 @@ void __init archos_omap4_ehci_init(void)
 
 	if (hub_rst > 0)
 		gpio_set_value(hub_rst, 0);
+
+	if (pwron_5v> 0)
+		gpio_set_value(pwron_5v, 1);
 
  error:	
 	return;

@@ -50,7 +50,7 @@ u32 sleep_while_idle;
 u32 wakeup_timer_seconds;
 u32 wakeup_timer_milliseconds;
 #endif
-u32 volt_off_mode;
+u32 volt_off_mode = 1;
 u32 voltage_off_while_idle;
 u32 omap4_device_off_counter = 0;
 int pmd_clks_enable;
@@ -880,7 +880,7 @@ static int __init pm_dbg_init(void)
 	 * ES2.1 will eventually cause a crash */
 	if (omap_rev() > OMAP3430_REV_ES2_0)
 		(void) debugfs_create_file("voltage_off_while_idle",
-					   S_IRUGO | S_IWUGO, d,
+					   S_IRUGO | S_IWUG, d,
 					   &voltage_off_while_idle,
 					   &pm_dbg_option_fops);
 

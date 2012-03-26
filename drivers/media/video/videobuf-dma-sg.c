@@ -150,6 +150,7 @@ static int videobuf_dma_init_user_locked(struct videobuf_dmabuf *dma,
 {
 	unsigned long first, last;
 	int err, rw = 0;
+	struct vm_area_struct *vma;
 
 	dma->direction = direction;
 	switch (dma->direction) {
@@ -178,6 +179,27 @@ static int videobuf_dma_init_user_locked(struct videobuf_dmabuf *dma,
 			     data & PAGE_MASK, dma->nr_pages,
 			     rw == READ, 1, /* force */
 			     dma->pages, NULL);
+
+	/*
+	 * If get_user_pages() fails (kernel allocated pages
+	 * for example), try to use the page table directly.
+	 */
+	if (err != dma->nr_pages) {
+		data = data & PAGE_MASK;
+		if (data < PAGE_OFFSET) {
+			vma = find_vma(current->mm, data);
+		}
+		for (err = 0; err < dma->nr_pages; err++) {
+			if (data >= PAGE_OFFSET) {
+				dma->pages[err] = virt_to_page(data);
+			} else {
+				dma->pages[err] = pfn_to_page(vma->vm_pgoff + ((data - vma->vm_start) >> PAGE_SHIFT));
+			}
+			if (!dma->pages[err])
+				break;
+			data += PAGE_SIZE;
+		}
+	}
 
 	if (err != dma->nr_pages) {
 		dma->nr_pages = (err >= 0) ? err : 0;

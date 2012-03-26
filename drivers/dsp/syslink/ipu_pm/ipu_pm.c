@@ -1165,7 +1165,7 @@ static inline int ipu_pm_get_aux_clk(struct ipu_pm_object *handle,
 	/* Rate should be provided in Mhz */
 	/* FIXME: The following values should be provided by requester */
 	parent_clk_rate = 192;
-	clk_rate = 24;
+	clk_rate = 12;
 	clk_src = 0x2;
 
 	if ((aux_clk_num < AUX_CLK_MIN) || (aux_clk_num > AUX_CLK_MAX)) {

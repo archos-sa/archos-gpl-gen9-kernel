@@ -595,11 +595,14 @@ static int try_pix_parm(struct omap34xxcam_videodev *vdev,
 
 				/*
 				 * Select bigger resolution if it's available
-				 * at same fps.
+				 * at same fps (only if an input resolution 
+				 * equal to the wanted output one has not been 
+				 * found).
 				 */
 #ifdef CONFIG_VIDEO_OMAP3_SIZENEG_TRYBIGGER
 				if (frmi.width + frmi.height
 				    > best_pix_in->width + best_pix_in->height
+				    && (SIZE_DIFF(wanted_pix_out, best_pix_in) != 0)
 				    && FPS_ABS_DIFF(fps, frmi.discrete)
 				    <= FPS_ABS_DIFF(fps, *best_ival)) {
 					dev_dbg(&vdev->vfd->dev, "bigger res, "

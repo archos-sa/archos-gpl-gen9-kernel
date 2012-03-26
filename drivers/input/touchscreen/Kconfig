@@ -648,6 +648,13 @@ config TOUCHSCREEN_PIXCIR_I2C_TS
 
 	  If unsure, say N,
 
+config TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	bool "enable monotouch compat mode all archos tsps"
+	default n
+	help
+	  HACK enable monotouch compat mode for all archos tsps
+	  If unsure, say N,
+
 config TOUCHSCREEN_GOODIX_GT80x
 	tristate "Goodix GT80x"
 	help
@@ -669,6 +676,17 @@ config TOUCHSCREEN_TR16C0
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called tr16c0-i2c.
+
+config TOUCHSCREEN_CPT_I2C_TSP
+	tristate "CPT i2c touchscreen"
+	help
+	  Say Y here to enable support for I2C connected CPT
+	  touch panel.
+
+	  If unsure, say N.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called cpt_i2c_tsp.
 
 config TOUCHSCREEN_QUANTUM_OBP
 	tristate "Quantum OBP based touchscreens"

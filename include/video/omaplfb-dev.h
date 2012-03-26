@@ -21,9 +21,13 @@
 #ifndef __OMAPLFB_DEV_H__
 #define __OMAPLFB_DEV_H__
 
+#define MAX_OVLS 4
+
 struct omaplfb_clone_cmd {
 	int mgr_id_src;
 	int mgr_id_dst;
+	int dst_ovls[MAX_OVLS];
+	int nb_dst;
 };
 
 struct omaplfb_dsscomp_info {
@@ -36,6 +40,8 @@ struct omaplfb_dsscomp_info {
 #define OMAPLFB_CLONING_ENABLE _IOW('O', 128, struct omaplfb_clone_cmd)
 #define OMAPLFB_CLONING_DISABLE _IOW('O', 129, struct omaplfb_clone_cmd)
 #define OMAPLFB_DSSCOMP_SETUP _IOW('O', 130, struct omaplfb_dsscomp_info)
+#define OMAPLFB_DSSCOMP_FLUSH _IOW('O', 131, struct omaplfb_dsscomp_info)
+#define OMAPLFB_FLUSH_COMP   _IOW('O', 132, int)
 
 #endif /* __OMAPLFB_DEV_H__ */
 

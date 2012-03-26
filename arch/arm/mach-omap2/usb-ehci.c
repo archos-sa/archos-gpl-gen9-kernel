@@ -35,6 +35,7 @@
 #include <plat/omap_device.h>
 #include <plat/omap_hwmod.h>
 #include <linux/pm_runtime.h>
+#include <plat/clock.h>
 
 #include <plat/omap-pm.h>
 #include "mux.h"
@@ -276,14 +277,17 @@ static int uhhtll_drv_enable(enum driver_type drvtype);
 
 static int uhhtll_drv_disable(enum driver_type drvtype);
 
+
+#ifdef CONFIG_PM
 static int uhhtll_drv_hibernate(enum driver_type drvtype);
 
 static int uhhtll_drv_wakeup(enum driver_type drvtype);
 
-#ifdef CONFIG_PM
 static int uhhtll_drv_suspend(enum driver_type drvtype);
 
 static int uhhtll_drv_resume(enum driver_type drvtype);
+
+static int uhhtll_drv_wake_phy(enum driver_type drvtype);
 #endif
 
 static struct omap_device_pm_latency omap_uhhtll_latency[] = {
@@ -306,6 +310,7 @@ static struct uhhtll_apis uhhtll_export = {
 	.resume			= uhhtll_drv_resume,
 	.hibernate		= uhhtll_drv_hibernate,
 	.wakeup			= uhhtll_drv_wakeup,
+	.wake_phy		= uhhtll_drv_wake_phy,
 #endif
 };
 
@@ -433,7 +438,7 @@ static void usbhs_4430ehci_io_enable(const enum usbhs_omap3_port_mode
 	switch (port_mode[0]) {
 	case OMAP_EHCI_PORT_MODE_PHY:
 		omap_mux_enable_wakeup("usbb1_ulpiphy_dat0");
-		omap_mux_enable_wakeup("usbb1_ulpiphy_dir");
+		//omap_mux_enable_wakeup("usbb1_ulpiphy_dir");
 		break;
 
 	case OMAP_EHCI_PORT_MODE_TLL:
@@ -467,7 +472,7 @@ static void usbhs_4430ehci_io_disable(const enum usbhs_omap3_port_mode
 	switch (port_mode[0]) {
 	case OMAP_EHCI_PORT_MODE_PHY:
 		omap_mux_disable_wakeup("usbb1_ulpiphy_dat0");
-		omap_mux_disable_wakeup("usbb1_ulpiphy_dir");
+		//omap_mux_disable_wakeup("usbb1_ulpiphy_dir");
 		break;
 
 	case OMAP_EHCI_PORT_MODE_TLL:
@@ -2338,6 +2343,8 @@ static int usbhs_ehci_phywakeup(struct uhhtll_hcd_omap *omap)
        enum usbhs_omap3_port_mode *portmode = &(omap->platdata.port_mode[0]);
 
 	if (portmode[0] == OMAP_EHCI_PORT_MODE_PHY) {
+		if (!(gpio_is_valid(GPIO_USBB1_ULPITLL_STP) && gpio_is_valid(GPIO_USBB1_ULPITLL_DIR)))
+			return -EINVAL;
 		if (gpio_request(GPIO_USBB1_ULPITLL_STP, "phy_stp")) {
 			return -ENODEV;
 		}
@@ -2601,6 +2608,43 @@ static void usbhs_hw_accessible(struct usb_hcd *hcd, int enabled)
 		clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
 }
 
+static void usbhs_phy_clk_internal(struct uhhtll_hcd_omap *omap)
+{
+	/* WA for OMAP4430 Silicon errata i693 1/2
+	 *
+	 * Switch the clock to internal as the phy cuts the clock after
+	 * a minimum of 5 cycles whereas the omap counts to 18 before
+	 * cutting his clocks */
+	u32 reg;
+
+	if (omap->utmi_p1_fck != NULL) {
+		reg = __raw_readl(omap->utmi_p1_fck->clksel_reg);
+		__raw_writel((reg & ~(1 << 24)) | (1 << 8), omap->utmi_p1_fck->clksel_reg);
+		pr_debug("WA i693 - CLKSEL set to 0x%x\n", __raw_readl(omap->utmi_p1_fck->clksel_reg));
+
+		clk_enable(omap->utmi_p1_fck);
+		msleep(1);
+	}
+}
+
+static void usbhs_phy_clk_external(struct uhhtll_hcd_omap *omap)
+{
+	/* WA for OMAP4430 Silicon errata i693 2/2
+	 *
+	 * Switch back to the external clock to be in the correct setup
+	 * for a resume operation */
+	u32 reg;
+
+	if (omap->utmi_p1_fck != NULL) {
+		clk_disable(omap->utmi_p1_fck);
+
+		reg = __raw_readl(omap->utmi_p1_fck->clksel_reg);
+		__raw_writel((reg & ~(1 << 8)) | (1 << 24), omap->utmi_p1_fck->clksel_reg);
+		pr_debug("WA i693 - CLKSEL set to 0x%x\n", __raw_readl(omap->utmi_p1_fck->clksel_reg));
+	}
+
+}
+
 static int uhhtll_get_platform_data(struct usbhs_omap_platform_data *pdata)
 {
 	struct uhhtll_hcd_omap *omap = &uhhtll;
@@ -2788,6 +2832,7 @@ static int uhhtll_drv_suspend(enum driver_type drvtype)
 			is_ehciport0 = usbhs_is_ehciport0_connected(omap);
 			if (!is_ehciport0)
 				usbhs_ehci_physuspend(omap);
+			usbhs_phy_clk_internal(omap);
 			usbhs_ehci_io_wakeup(pdata->port_mode, 1);
 			usbhs_ehci_clk(omap, 0);
 			set_bit(USBHS_EHCI_SUSPENED, &omap->event_state);
@@ -2797,6 +2842,7 @@ static int uhhtll_drv_suspend(enum driver_type drvtype)
 			disable_irq(omap->ehci_res.irq);
 			if (omap->ehci_hcd)
 				usbhs_hw_accessible(omap->ehci_hcd, 0);
+			usbhs_phy_clk_external(omap);
 			if (pdata->platform_bus_suspend)
 				pdata->platform_bus_suspend();
 		}
@@ -2986,7 +3032,7 @@ static int uhhtll_drv_hibernate(enum driver_type drvtype) {
 			pdata->platform_bus_disable();
 
 		// Cut the power
-
+/*
 		dev_err(&omap->pdev->dev, "Switching usb regulators OFF\n");	
 		for (i = 0 ; i < OMAP3_HS_USB_PORTS ; i++) {
 			if (pdata->regulator[i] != NULL) {
@@ -2997,7 +3043,7 @@ static int uhhtll_drv_hibernate(enum driver_type drvtype) {
 				regulator_disable(pdata->regulator_optional[i]);
 			}
 		}		
-
+*/
 		clear_bit(USBHS_EHCI_LOADED, &omap->event_state);
 
 		// Disable usb_host interface clock
@@ -3023,7 +3069,7 @@ static int uhhtll_drv_wakeup(enum driver_type drvtype) {
 	if (down_interruptible(&omap->mutex))
 		return -ERESTARTSYS;
 
-
+/*
 		// Powerup
 		dev_err(&omap->pdev->dev, "Switching usb regulators ON\n");
 		for (i = 0; i < OMAP3_HS_USB_PORTS; i++) {
@@ -3034,7 +3080,7 @@ static int uhhtll_drv_wakeup(enum driver_type drvtype) {
 				regulator_enable(pdata->regulator_optional[i]);
 			}
 		}
-
+*/
 		// Enable the Phy
 		dev_err(&omap->pdev->dev, "Enabling platform bus\n");
 		if (pdata->platform_bus_enable)
@@ -3104,6 +3150,22 @@ static int uhhtll_drv_wakeup(enum driver_type drvtype) {
 	return 0;
 }
 	
+static int uhhtll_drv_wake_phy(enum driver_type drvtype){
+	struct uhhtll_hcd_omap *omap = &uhhtll;
+	u32 reg;
+	reg = uhhtll_omap_read(omap->uhh_base, OMAP_UHH_SYSCONFIG);
+	reg &= OMAP_UHH_SYSCONFIG_STDYMODE_RESET;
+	reg &= OMAP_UHH_SYSCONFIG_IDLEMODE_RESET;
+	reg |= OMAP_UHH_SYSCONFIG_NIDLEMODE_SET;
+	reg |= OMAP_UHH_SYSCONFIG_NSTDYMODE_SET;
+	uhhtll_omap_write(omap->uhh_base, OMAP_UHH_SYSCONFIG, reg);
+
+	if (drvtype == OMAP_EHCI)
+		return usbhs_ehci_phywakeup(omap);
+	else
+		return 0;
+}
+
 #endif
 
 /* MUX settings for EHCI pins */

@@ -146,6 +146,10 @@ struct pixcir_priv {
 
 	int is_m45;
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	int down;
+#endif
+
 	int irq;
 
 	struct workqueue_struct *wq;
@@ -346,6 +350,11 @@ static void pixcir_m48_work_func(struct work_struct *work)
 
 	for (i = 0; i < 2; i++) {
 		int x = 0, y = 0, w = 0, h = 0;
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+		if (i)
+			break;
+#endif
+
 		if (i < data[map_m48.touch]) {
 			w = data[map_m48.p[i].x_w];
 			h = data[map_m48.p[i].y_w];
@@ -367,6 +376,16 @@ static void pixcir_m48_work_func(struct work_struct *work)
 			if (priv->flags & PIXCIR_FLAGS_INV_Y)
 				y = priv->y_min + (priv->y_max - y);
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_X, x);
+			input_report_abs(priv->input_dev, ABS_Y, y);
+			input_report_abs(priv->input_dev, ABS_PRESSURE, w);
+
+			if (priv->down) {
+				input_report_key(priv->input_dev, BTN_TOUCH, 1);
+				priv->down=0;
+			}
+#else
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, i);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_X, x);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, y);
@@ -375,15 +394,21 @@ static void pixcir_m48_work_func(struct work_struct *work)
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, w);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MINOR, h);
 			input_mt_sync(priv->input_dev);
-
+#endif
 		} else if (i < data[map_m48.old_touch] ||
 				(data[map_m48.old_touch] == 0 && data[map_m48.touch] == 0) ) {
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_PRESSURE, 0);
+			input_report_key(priv->input_dev, BTN_TOUCH, 0);
+			priv->down=1;
+#else 
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, i);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MINOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MINOR, 0);
 			input_mt_sync(priv->input_dev);
+#endif
 		} else {
 			//
 		}
@@ -446,7 +471,22 @@ static void pixcir_m45_work_func(struct work_struct *work)
 		int up = (f->status & 1);
 		int dw = (f->status & 2);
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+		if (id)
+			break;
+#endif
+
 		if (dw) {
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_X, f->x);
+			input_report_abs(priv->input_dev, ABS_Y, f->y);
+			input_report_abs(priv->input_dev, ABS_PRESSURE, f->xz);
+
+			if (priv->down) {
+				input_report_key(priv->input_dev, BTN_TOUCH, 1);
+				priv->down=1;
+			}
+#else
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, id);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_X, f->x);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, f->y);
@@ -455,13 +495,20 @@ static void pixcir_m45_work_func(struct work_struct *work)
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, f->xw);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MINOR, f->yw);
 			input_mt_sync(priv->input_dev);
+#endif
 		} else if (up) {
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_PRESSURE, 0);
+			input_report_key(priv->input_dev, BTN_TOUCH, 0);
+			priv->down=0;
+#else
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, id);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MINOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MINOR, 0);
 			input_mt_sync(priv->input_dev);
+#endif
 		}
 	}
 
@@ -727,6 +774,10 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 		priv->y_offset = pdata->y_offset;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	priv->down = 0;
+#endif
+
 	priv->wq = create_singlethread_workqueue(id->name);
 	if (priv->wq == NULL) {
 		ret = -ENOMEM;
@@ -797,11 +848,12 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 	priv->input_dev->name = id->name;
 
 	set_bit(EV_SYN, priv->input_dev->evbit);
-
-	set_bit(EV_KEY, priv->input_dev->evbit);
-	set_bit(BTN_TOUCH, priv->input_dev->keybit);
 	set_bit(EV_ABS, priv->input_dev->evbit);
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	set_bit(EV_KEY, priv->input_dev->evbit);
+	set_bit(BTN_TOUCH, priv->input_dev->keybit);
+#else
 	set_bit(ABS_MT_POSITION_X, priv->input_dev->absbit);
 	set_bit(ABS_MT_POSITION_Y, priv->input_dev->absbit);
 	set_bit(ABS_MT_TRACKING_ID, priv->input_dev->absbit);
@@ -809,9 +861,13 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 	set_bit(ABS_MT_TOUCH_MINOR, priv->input_dev->absbit);
 	set_bit(ABS_MT_WIDTH_MAJOR, priv->input_dev->absbit);
 	set_bit(ABS_MT_WIDTH_MINOR, priv->input_dev->absbit);
+#endif
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
 	input_set_abs_params(priv->input_dev, ABS_X, priv->x_min, priv->x_max, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_Y, priv->y_min, priv->y_max, 0, 0);
+	input_set_abs_params(priv->input_dev, ABS_PRESSURE, 0, 0x80, 0, 0);
+#else
 	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, priv->x_min, priv->x_max, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, priv->y_min, priv->y_max, 0, 0);
 
@@ -819,6 +875,7 @@ static int pixcir_probe(struct i2c_client *client, const struct i2c_device_id *i
 	input_set_abs_params(priv->input_dev, ABS_MT_TOUCH_MINOR, 0, 0x80, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0, 0x80, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_WIDTH_MINOR, 0, 0x80, 0, 0);
+#endif
 
 	ret = input_register_device(priv->input_dev);
 	if (ret) {

@@ -29,6 +29,12 @@
 #include <plat/vrfb.h>
 #include <plat/dma.h>
 
+#ifdef CONFIG_PM
+#include <plat/omap-pm.h>
+#endif
+
+#define MODULE_NAME "cma"
+
 #include <media/cma.h>
 
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
@@ -38,6 +44,10 @@
 #include <linux/omap_resizer.h>
 #endif
 
+int debug_cma;
+module_param(debug_cma, int, 0644);
+int sync_cma = 1;	// for now force CMA in sync mode!
+module_param(sync_cma, int, 0644);
 
 #define NB_BUFFERS 	6
 #define BPP	   	2
@@ -55,11 +65,6 @@ struct cma_dev {
 	struct blocking_notifier_head notifier;
 };
 
-struct client_info{
-	struct list_head list;
-	pid_t pid;
-};
-
 struct buf_info {
 	wait_queue_head_t wq;
 	bool locked;
@@ -75,15 +80,22 @@ struct buf_info {
 	int out_height;
 	void* virt_addr;
 	void* vrfb_vaddr;
+	int use_vrfb;
 	unsigned long max_size;
 	struct cma_buffer info;
-	struct client_info pid;
 	struct vrfb vrfb_ctx;
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
 	struct list_head node;
 	int index;
 #endif
 };
+
+#ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
+struct cma_resizer_work {
+	struct work_struct work;
+	struct buf_info *info;
+};
+#endif
 
 struct ovl_win {
 	int width;
@@ -92,6 +104,7 @@ struct ovl_win {
 };
 
 static struct cma_dev *cma_device;
+static struct device *device;
 static struct class *cmadev_class;
 static s32 cma_major;
 static s32 cma_minor;
@@ -111,51 +124,20 @@ static struct platform_driver cma_driver_ldm = {
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
 struct isp_node pipe;
 static LIST_HEAD(resizer_queue);
+static struct workqueue_struct *resizer_workqueue;
 #endif
-
-/* get process info, and increment refs for device tracking */
-static s32 add_pid_locked(int index, pid_t pid)
-{
-	struct client_info *pi;
-	struct client_info *new_pi;
-	s32 r = 0;
-
-	/* find process context */
-	list_for_each_entry(pi, &buffer_state[index].pid.list, list) {
-		if (pi->pid == pid)
-			goto done;
-	}
-
-	new_pi = kzalloc(sizeof(*new_pi), GFP_KERNEL);
-	if (new_pi == NULL) {
-		r = -ENOMEM;
-		goto done;
-	}
-	INIT_LIST_HEAD(&new_pi->list);
-	new_pi->pid = pid;
-
-	list_add(&new_pi->list, &buffer_state[index].pid.list);
-
-done:
-	return r;
-}
-
-/* get process info, and increment refs for device tracking */
-static void remove_pid_locked(int index, pid_t pid)
-{
-	struct client_info *pi;
-	struct list_head *pos, *q;
-
-	/* find process context */
-	list_for_each_safe(pos, q, &buffer_state[index].pid.list) {
-		pi= list_entry(pos, struct client_info, list);
-		if (pi->pid == pid)
-			list_del(pos);
-	}
-}
 
 static s32 cma_open(struct inode *ip, struct file *filp)
 {
+	int ret = 0;
+	/* get the ISP resizer resource and configure it*/
+	ispdss_put_resource();
+	ret = ispdss_get_resource();
+	if (ret) {
+		printk(KERN_ERR "<%s>: <%s> failed to get ISP "
+				"resizer resource = %d\n",
+				__FILE__, __func__, ret);
+	}
 	return 0;
 }
 
@@ -170,20 +152,19 @@ static int cma_alloc_buffers(void)
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
 		buffer_state[i].index = i;
 #endif
-		buffer_state[i].locked = false;
+		buffer_state[i].locked    = false;
 		buffer_state[i].requested = false;
-		buffer_state[i].dma_ch = -1;
-		buffer_state[i].state = CMABUF_FREE;
-		INIT_LIST_HEAD(&buffer_state[i].pid.list);
+		buffer_state[i].dma_ch    = -1;
+		buffer_state[i].state     = CMABUF_READY;
 		init_waitqueue_head(&buffer_state[i].wq);
 		size = CMA_BUFFER_SIZE;
 		buffer_state[i].virt_addr = alloc_pages_exact(size, GFP_KERNEL | GFP_DMA);
 		if (buffer_state[i].virt_addr) {
-			buffer_state[i].phys_addr = virt_to_phys(buffer_state[i].virt_addr);
-			buffer_state[i].max_size = CMA_BUFFER_SIZE;
+			buffer_state[i].phys_addr   = virt_to_phys(buffer_state[i].virt_addr);
+			buffer_state[i].max_size    = CMA_BUFFER_SIZE;
 			buffer_state[i].info.offset = i << PAGE_SHIFT;
-			buffer_state[i].info.index = i;
-			buffer_state[i].info.size = 0;
+			buffer_state[i].info.index  = i;
+			buffer_state[i].info.size   = 0;
 		} else {
 			printk(KERN_ERR "can not allocate buffers %d\n",i);
 			return -1;
@@ -208,10 +189,10 @@ static int cma_unlockbuf(int index)
 	if (index < NB_BUFFERS) {
 		if (buffer_state[index].locked == true) {
 			buffer_state[index].locked = false;
+			buffer_state[index].requested = false;
 			wake_up_interruptible_sync(&buffer_state[index].wq);
 		}
 	}
-	remove_pid_locked(index, current->tgid);
 	mutex_unlock(&mtx);
 	return 0;
 }
@@ -241,20 +222,19 @@ static int cma_lockbuf(u32 index, bool force)
 	if (!force) r = cma_waitbuf_unlocked(index);
 	else r =0;
 	buffer_state[index].locked = true;
-	add_pid_locked(index, current->tgid);
 	mutex_unlock(&mtx);
 	return r;
 }
 
-
-static int cma_waitbuf_free_or_busy(int index)
+static int cma_waitbuf_ready(int index)
 {
-	u32 timeout = usecs_to_jiffies(66 * 1000); /*delay before timing out */
+	u32 timeout = usecs_to_jiffies(33 * 1000); /*delay before timing out */
 
-	if ((buffer_state[index].state != CMABUF_BUSY) && (buffer_state[index].state != CMABUF_FREE)) {
-		timeout = wait_event_interruptible_timeout(buffer_state[index].wq, (buffer_state[index].state==CMABUF_FREE)||(buffer_state[index].state==CMABUF_BUSY), timeout);
-		if (timeout <= 0)
-			return timeout ? : -ETIME;
+	if (buffer_state[index].state != CMABUF_READY) {
+		timeout = wait_event_interruptible_timeout(buffer_state[index].wq, (buffer_state[index].state==CMABUF_READY), timeout);
+		if (timeout == 0) {
+			return -ETIME;
+		}
 	}
 
 	return 0;
@@ -271,8 +251,12 @@ static int __enable_isp_rsz(int index, int line)
 	 * for width > 1024 and scaling 1/2x~1/8x
 	 */
 
-	if (buffer_state[index].width > 1024)
+        /* The input size is the same as the output size and not too big, no need to resize, just copy*/
+	if (buffer_state[index].width == ovl_win[ovl_ix].width) return -1;
+
+	if (buffer_state[index].width >= 1024)
 		goto enable_and_exit;
+
 
 	/* Check for vertical scale */
 	src_h = buffer_state[index].height;
@@ -297,7 +281,6 @@ enable_and_exit:
 
 static void __disable_isp_rsz(int index, int line)
 {
-	ispdss_put_resource();
 }
 #define disable_isp_rsz(x) __disable_isp_rsz(x, __LINE__)
 
@@ -322,51 +305,84 @@ static void cma_setup_pipe_from_buffer(int index, struct isp_node *pipe)
 
 }
 
+static void tput_get( void )
+{
+#ifdef CONFIG_PM
+	if (!cpu_is_omap44xx()) {
+		if (cpu_is_omap3630()) {
+			omap_pm_set_min_bus_tput( device, OCP_INITIATOR_AGENT, 200 * 1000 * 4);
+		} else {
+			omap_pm_set_min_bus_tput( device, OCP_INITIATOR_AGENT, 166 * 1000 * 4);
+		}
+	}
+#endif
+}
+
+static void tput_put( void )
+{
+#ifdef CONFIG_PM
+	if (!cpu_is_omap44xx()) {
+		omap_pm_set_min_bus_tput( device, OCP_INITIATOR_AGENT, 0);
+	}
+#endif
+}
+
+static u64 atime( void )
+{
+	struct timeval tv;
+	do_gettimeofday(&tv);
+
+	return (u64)1000000 * (u64)tv.tv_sec + (u64)tv.tv_usec;
+}
+
 static int init_isp_rsz(int index);
 
-static void start_dequeued_resizer(void) {
-	struct buf_info *next;
+static void do_resize(struct buf_info *next) 
+{
 	int ret = 0;
+	u64 start = atime();
+	u64 p1, p2, p3, p4;
 
-	while (!list_empty(&resizer_queue)) {
-		next = list_entry(resizer_queue.next, struct buf_info, node);
-		init_isp_rsz(next->index);
-		ret = ispdss_begin(&pipe, next->index, next->index,
-			MAX_PIXELS_PER_LINE * 4,
-			buffer_state[next->index].vrfb_ctx.paddr[0],
-			buffer_state[next->index].phys_addr,
-			buffer_state[next->index].info.size);
+	tput_get();
 
-		if (ret) {
-			printk(KERN_ERR "<%s> ISP resizer Failed to resize "
-					"the buffer = %d\n",
-					__func__, ret);
-		}
-		list_del(&next->node);
+	init_isp_rsz(next->index);
+	p1 = atime() - start;
 
-		buffer_state[next->index].dma_ch = -1;
-		buffer_state[next->index].state = CMABUF_BUSY;
-		disable_isp_rsz(next->index);
+	ret = ispdss_begin(&pipe, next->index, next->index,
+		MAX_PIXELS_PER_LINE * 4,
+		buffer_state[next->index].vrfb_ctx.paddr[0],
+		buffer_state[next->index].phys_addr,
+		buffer_state[next->index].info.size);
 
-		wake_up_interruptible_sync(&buffer_state[next->index].wq);
+	p2 = atime() - start;
+
+	if (ret) {
+		printk(KERN_ERR "<%s> ISP resizer Failed to resize "
+				"the buffer = %d\n",
+				__func__, ret);
 	}
 
+	buffer_state[next->index].dma_ch = -1;
+	buffer_state[next->index].state = CMABUF_READY;
+	disable_isp_rsz(next->index);
+
+	tput_put();
+
+	p3 = atime() - start;
+
+	wake_up_interruptible_sync(&buffer_state[next->index].wq);
+	
+	p4 = atime() - start;
+
+	if(debug_cma) {
+		printk("isp post %6lld  %6lld  %6lld  %6lld  ", p1, p2, p3, p4 );
+	}
 }
 
 /* This function configures and initializes the ISP resizer*/
 static int init_isp_rsz(int index)
 {
 	int ret = 0;
-
-	/* get the ISP resizer resource and configure it*/
-	ispdss_put_resource();
-	ret = ispdss_get_resource();
-	if (ret) {
-		printk(KERN_ERR "<%s>: <%s> failed to get ISP "
-				"resizer resource = %d\n",
-				__FILE__, __func__, ret);
-		return ret;
-	}
 
 	/* clear data */
 	memset(&pipe, 0, sizeof(pipe));
@@ -377,71 +393,126 @@ static int init_isp_rsz(int index)
 		printk(KERN_ERR "<%s> failed to configure "
 				"ISP_resizer = %d\n",
 				__func__, ret);
-		ispdss_put_resource();
 		return ret;
 	}
 
 	return ret;
 }
 
-static void start_resizer(int index) {
-	bool needResizer = list_empty(&resizer_queue);
-	list_add_tail(&buffer_state[index].node, &resizer_queue);
-	if (needResizer)
-		start_dequeued_resizer();
+static void cma_resizer_handler(struct work_struct *work) 
+{
+	struct cma_resizer_work *resizer_work =
+		(struct cma_resizer_work *) work;
+	do_resize( resizer_work->info );
+	kfree(resizer_work);
+}
+
+static void start_resizer(int index) 
+{
+	if( sync_cma ) {
+		do_resize( &buffer_state[index] );
+		return;
+	} else {
+		struct cma_resizer_work *work = NULL;
+		int queued_resizer_work = 0;
+
+		work = kmalloc(sizeof(struct cma_resizer_work), GFP_KERNEL);
+		if (!work) 
+			return;
+		INIT_WORK((struct work_struct *)work, cma_resizer_handler);
+		work->info = &buffer_state[index];
+		queued_resizer_work = queue_work(resizer_workqueue, (struct work_struct *)work);
+		if (!queued_resizer_work) {
+			printk(KERN_ERR "Failed to queue resizer work\n");
+			kfree(work);
+		}
+	}
 }
 #endif
 
-u32 cma_set_output_buffer(u32 paddr, u32 *new_addr, int rotation, bool mirror, u16 *in_width, u16 *in_height) {
-	int index = 0;
-	int offset = 0;
-
+int get_buffer_index( u32 paddr )
+{
+	int index;
 	for (index = 0; index < NB_BUFFERS; index++) {
 		if (buffer_state[index].phys_addr == paddr)
-			break;
+			return index;
 	}
-	if (index >= NB_BUFFERS) {
+	return -1;
+}
+
+int cma_is_buffer_ready(u32 paddr, bool wait)
+{
+	int index;
+
+	if( (index = get_buffer_index( paddr )) < 0 ) {
 		return -1;
 	}
 
-//	cma_waitbuf_free_or_busy(index);
+	if (wait) {
+		return cma_waitbuf_ready(index);
+	} else {
+		return (buffer_state[index].state != CMABUF_READY) ? -ETIME : 0;
+	}
+}
+EXPORT_SYMBOL(cma_is_buffer_ready);
+
+u32 cma_set_output_buffer(u32 paddr, u32 *new_addr, int rotation, bool mirror, u16 *in_width, u16 *in_height, u16 *stride) 
+{
+	int index;
+	int offset = 0;
+
+	if( (index = get_buffer_index( paddr )) < 0 ) {
+		return -1;
+	}
 
 	*in_width = buffer_state[index].out_width;
 	*in_height = buffer_state[index].out_height;
 	if (rotation%2)
 		swap(*in_width, *in_height);
 
-	switch ((rotation + (mirror?2:0))%4) {
-	  case 0:
-		  offset = 0;
-	    break;
-	  case 1:
-		  offset = buffer_state[index].vrfb_ctx.yoffset * buffer_state[index].vrfb_ctx.bytespp;
-	    break;
-	  case 2:
-		  offset = (MAX_PIXELS_PER_LINE * buffer_state[index].vrfb_ctx.yoffset + buffer_state[index].vrfb_ctx.xoffset)* buffer_state[index].vrfb_ctx.bytespp;
-	    break;
-	  case 3:
-		  offset = (MAX_PIXELS_PER_LINE * buffer_state[index].vrfb_ctx.xoffset)* buffer_state[index].vrfb_ctx.bytespp;
-	    break;
+	if (buffer_state[index].use_vrfb == 0) {
+	    //We can perhaps optimize bandwidth here
+		*new_addr = buffer_state[index].phys_addr;
+		buffer_state[index].state = CMABUF_READY;
+		wake_up_interruptible_sync(&buffer_state[index].wq);
+		return 0;
 	}
 
+	switch ((rotation + (mirror ? 2 : 0)) % 4) {
+	case 0:
+		offset = 0;
+		break;
+	case 1:
+		offset = buffer_state[index].vrfb_ctx.yoffset * buffer_state[index].vrfb_ctx.bytespp;
+		break;
+	case 2:
+		offset = (MAX_PIXELS_PER_LINE * buffer_state[index].vrfb_ctx.yoffset + buffer_state[index].vrfb_ctx.xoffset)* buffer_state[index].vrfb_ctx.bytespp;
+		break;
+	case 3:
+		offset = (MAX_PIXELS_PER_LINE * buffer_state[index].vrfb_ctx.xoffset)* buffer_state[index].vrfb_ctx.bytespp;
+		break;
+	}
+
+	*stride = 2048;
 	*new_addr = buffer_state[index].vrfb_ctx.paddr[(rotation + (mirror?2:0))%4] + offset;
 	if (mirror)
 		*new_addr += MAX_PIXELS_PER_LINE *((rotation&1)?buffer_state[index].vrfb_ctx.xres:buffer_state[index].vrfb_ctx.yres - 1) *buffer_state[index].vrfb_ctx.bytespp;
+
 	return 0;
 }
 EXPORT_SYMBOL(cma_set_output_buffer);
 
-void callback_dma_tx(int lch, u16 ch_status, void* data) {
+void callback_dma_tx(int lch, u16 ch_status, void* data) 
+{
 	int index = (int) data;
 	omap_free_dma(lch);
 	buffer_state[index].dma_ch = -1;
-	buffer_state[index].state = CMABUF_BUSY;
+	buffer_state[index].state = CMABUF_READY;
 	wake_up_interruptible_sync(&buffer_state[index].wq);
 }
 
-int startDmaTransfer(int index) {
+int startDmaTransfer(int index) 
+{
 	u32 dest_frame_index = 0, src_element_index = 0;
 	u32 dest_element_index = 0, src_frame_index = 0;
 
@@ -478,27 +549,28 @@ int startDmaTransfer(int index) {
 	omap_set_dma_dest_burst_mode(buffer_state[index].dma_ch, OMAP_DMA_DATA_BURST_16);
 	omap_dma_set_global_params(DMA_DEFAULT_ARB_RATE, 0x20, 0);
 
+	/*use posted write mode to increase bandwidth*/
+	omap_set_dma_write_mode(buffer_state[index].dma_ch, OMAP_DMA_WRITE_POSTED);
+
 	omap_start_dma(buffer_state[index].dma_ch);
 	return 0;
 }
 
 int cma_set_buf_state(int paddr, enum cmabuf_state state, int ovl_ix)
 {
-	int index = 0;
+	int index;
 	int ret = 0;
+	u64 start = atime();
 
 	mutex_lock(&mtx);
-	for (index = 0; index < NB_BUFFERS; index++) {
-	    if (buffer_state[index].phys_addr == paddr)
-		break;
-	}
-	if (index >= NB_BUFFERS) {
+
+	if( (index = get_buffer_index( paddr )) < 0 ) {
 		ret = -1;
 		goto quit;
 	}
 
 	buffer_state[index].state = state;
-	if (state == CMABUF_BUSY) {
+	if (state == CMABUF_READY) {
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
 		int isp_enabled;
 #endif
@@ -513,29 +585,46 @@ int cma_set_buf_state(int paddr, enum cmabuf_state state, int ovl_ix)
 		}
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
 		isp_enabled = !enable_isp_rsz(index);
+		if ((!isp_enabled) && (buffer_state[index].width == ovl_win[ovl_ix].width) && (buffer_state[index].height == ovl_win[ovl_ix].height) && (buffer_state[index].width == 1280))
+			buffer_state[index].height -= 2;
 		if (isp_enabled) {
-			buffer_state[index].out_width = ((ovl_win[ovl_ix].width + 0x0F) & ~0x0F);
+			buffer_state[index].out_width  = ((ovl_win[ovl_ix].width + 0x0F) & ~0x0F);
 			buffer_state[index].out_height = ovl_win[ovl_ix].height * buffer_state[index].out_width / ovl_win[ovl_ix].width;
+
+			if (buffer_state[index].out_width > 1264) {
+				buffer_state[index].out_height = (buffer_state[index].out_height * 1264) /buffer_state[index].out_width;
+				buffer_state[index].out_width = 1264;
+			}
 		} else
 #endif
 		{
-			buffer_state[index].out_width = buffer_state[index].width;
+			buffer_state[index].out_width  = buffer_state[index].width;
 			buffer_state[index].out_height = buffer_state[index].height;
 		}
-		//Setup shadow vrfb context
-		omap_vrfb_setup(&buffer_state[index].vrfb_ctx, buffer_state[index].vrfb_paddr, buffer_state[index].out_width, buffer_state[index].out_height, BPP, true, ovl_win[ovl_ix].rotation);
+		if ((ovl_win[ovl_ix].rotation != 0) || (isp_enabled)) {
+			//Setup shadow vrfb context
+			buffer_state[index].use_vrfb = 1;
+			omap_vrfb_setup(&buffer_state[index].vrfb_ctx, buffer_state[index].vrfb_paddr, buffer_state[index].out_width, buffer_state[index].out_height, BPP, true, ovl_win[ovl_ix].rotation);
+			if(debug_cma) printk("vrfb post %6lld  ", atime() - start);
+
+			//change state to CMA_PREPROCESSING
+			buffer_state[index].state = CMABUF_PREPROCESSING;
 
 #ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
-		if (isp_enabled) {
-			start_resizer(index);
-		} else
+			if (isp_enabled) {
+				start_resizer(index);
+				if(debug_cma) printk("rsz post %6lld\n", atime() - start);
+			} else
 #endif
-		{
-			//initiate DMA copy
-			startDmaTransfer(index);
+			{
+				//initiate DMA copy
+				startDmaTransfer(index);
+				if(debug_cma) printk("dma post %6lld\n", atime() - start);
+			}
+		} else {
+			if(debug_cma) printk("Optimized : no vrfb, dma or resize\n");
+			buffer_state[index].use_vrfb = 0;
 		}
-		//change state to CMA_PREPROCESSING
-		state = CMABUF_PREPROCESSING;
 	}
 	wake_up_interruptible_sync(&buffer_state[index].wq);
 quit:
@@ -551,8 +640,8 @@ int cma_set_ovl_win(int ovl_ix, int width, int height, int rotation)
 		return -1;
 
 	mutex_lock(&mtx);
-	ovl_win[ovl_ix].width = width;
-	ovl_win[ovl_ix].height = height;
+	ovl_win[ovl_ix].width    = width;
+	ovl_win[ovl_ix].height   = height;
 	ovl_win[ovl_ix].rotation = rotation;
 	if (rotation%2) {
 		swap(ovl_win[ovl_ix].width, ovl_win[ovl_ix].height);
@@ -568,21 +657,21 @@ static int cma_reqbuf(struct cma_reqbuf *p)
 	int i;
 	mutex_lock(&mtx);
 	for (i = 0; i<NB_BUFFERS; i++) {
-		if ((buffer_state[i].max_size >= p->width*p->height*BPP)&&(buffer_state[i].requested == false)) { //should be aligned
-			buffer_state[i].info.size =  p->width*p->height*BPP;
+		if ((buffer_state[i].max_size >= p->width * p->height * BPP) && (buffer_state[i].requested == false)) { //should be aligned
+			buffer_state[i].info.size =  p->width * p->height * BPP;
 			memcpy(&p->info, &buffer_state[i].info, sizeof(struct cma_buffer));
 			mutex_unlock(&mtx);
-			if (cma_waitbuf_free_or_busy(i) == -ETIME) {
+			if (cma_waitbuf_ready(i) == -ETIME) {
 				r= -EFAULT;
 				return r;;
 			}
 			mutex_lock(&mtx);
-			buffer_state[i].width = p->width;
-			buffer_state[i].height = p->height;
-			buffer_state[i].ovl_ix = -1;
-			buffer_state[i].out_width = p->width;
+			buffer_state[i].width      = p->width;
+			buffer_state[i].height     = p->height;
+			buffer_state[i].ovl_ix     = -1;
+			buffer_state[i].out_width  = p->width;
 			buffer_state[i].out_height = p->height;
-			buffer_state[i].requested = true;
+			buffer_state[i].requested  = true;
 			r = 0;
 			goto done;
 		}
@@ -616,11 +705,7 @@ static int cma_freebuf(u32 index)
 		return -EINVAL;
 	mutex_lock(&mtx);
 	buffer_state[index].requested = false;
-	buffer_state[index].state = CMABUF_FREE;
-	memset(buffer_state[index].virt_addr, 0x0, CMA_BUFFER_SIZE);
-	memset(buffer_state[index].vrfb_vaddr, 0x0, CMA_BUFFER_SIZE);
-	if (buffer_state[index].dma_ch != -1) omap_stop_dma(buffer_state[index].dma_ch);
-	buffer_state[index].dma_ch = -1;
+	buffer_state[index].state = CMABUF_READY;
 	mutex_unlock(&mtx);
 	cma_unlockbuf(index);
 	wake_up_interruptible_sync(&buffer_state[index].wq);
@@ -631,9 +716,17 @@ static s32 cma_release(struct inode *ip, struct file *filp)
 {
 	int i;
 	for (i = 0; i < NB_BUFFERS; i++) {
+		if (buffer_state[i].dma_ch != -1) omap_stop_dma(buffer_state[i].dma_ch);
+		buffer_state[i].dma_ch = -1;
+		memset(buffer_state[i].virt_addr, 0x0, CMA_BUFFER_SIZE);
+		memset(buffer_state[i].vrfb_vaddr, 0x0, CMA_BUFFER_SIZE);
 		cma_freebuf(i);
-		remove_pid_locked(i, current->tgid);
 	}
+#ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
+	if (resizer_workqueue) 
+		flush_workqueue(resizer_workqueue);
+#endif
+	ispdss_put_resource();
 	return 0;
 }
 
@@ -735,7 +828,6 @@ static int __init cma_init(void)
 {
 	int r = -1;
 	dev_t dev  = 0;
-	struct device *device = NULL;
 
 	mutex_init(&mtx);
 
@@ -777,6 +869,15 @@ static int __init cma_init(void)
 		printk(KERN_ERR "device_create() fail\n");
 
 	r = platform_driver_register(&cma_driver_ldm);
+
+#ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
+	resizer_workqueue = create_singlethread_workqueue("cma_resizer_wq");
+	if (!resizer_workqueue) {
+		printk(KERN_ERR "Unable to create workqueue for resizer\n");
+		r = -EBUSY;
+	}
+#endif
+
 error:
 	/* TODO: error handling for device registration */
 	if (r) {
@@ -803,6 +904,13 @@ static void __exit cma_exit(void)
 	kfree(cma_device);
 	device_destroy(cmadev_class, MKDEV(cma_major, cma_minor));
 	class_destroy(cmadev_class);
+
+#ifdef CONFIG_OMAP3_ISP_RESIZER_ON_OVERLAY
+	if (resizer_workqueue) {
+		flush_workqueue(resizer_workqueue);
+		destroy_workqueue(resizer_workqueue);
+	}
+#endif
 }
 
 MODULE_LICENSE("GPL v2");

@@ -105,7 +105,7 @@ void mmc_request_done(struct mmc_host *host, struct mmc_request *mrq)
 	}
 
 	if (err && cmd->retries) {
-		pr_debug("%s: req failed (CMD%u): %d, retrying...\n",
+		pr_info("%s: req failed (CMD%u): %d, retrying...\n",
 			mmc_hostname(host), cmd->opcode, err);
 
 		cmd->retries--;

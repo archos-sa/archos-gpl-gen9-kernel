@@ -1048,6 +1048,14 @@ exit_init_failed:
 exit_misc_device_register_failed:
 	input_free_device(i2c_data->input_dev);
 exit_input_dev_alloc_failed:
+	if (!IS_ERR(accel_1v8)) {
+		regulator_disable(accel_1v8);
+		regulator_put(accel_1v8);
+	}
+	if (!IS_ERR(accel_vcc)) {
+		regulator_disable(accel_vcc);
+		regulator_put(accel_vcc);
+	}
 	free_irq(i2c_data->pdata->irq, client);
 exit_req_irq_failed:
 exit_plat_data_failed:
@@ -1063,10 +1071,14 @@ static int __exit mma7660fc_remove(struct i2c_client *client)
 	misc_deregister(&mma7660fc_ctrl_device);
 	input_unregister_device(data->input_dev);
 	unregister_early_suspend(&data->early_suspend);
-	if (!IS_ERR(accel_1v8))
+	if (!IS_ERR(accel_1v8)) {
 		regulator_disable(accel_1v8);
-	if (!IS_ERR(accel_vcc))
+		regulator_put(accel_1v8);
+	}
+	if (!IS_ERR(accel_vcc)) {
 		regulator_disable(accel_vcc);
+		regulator_put(accel_vcc);
+	}
 	free_irq(data->pdata->irq, client);
 	kfree(data);
 	return 0;
@@ -1079,11 +1091,22 @@ static int mma7660fc_suspend(struct i2c_client *client, pm_message_t mesg)
 //		cancel_delayed_work_sync(&data->polling_work);
 //		mma7660fc_set_mode(MMA7660FC_MODE_STANDBY);
 //	}
+
+	if (!IS_ERR(accel_1v8))
+		regulator_disable(accel_1v8);
+	if (!IS_ERR(accel_vcc))
+		regulator_disable(accel_vcc);
+
 	return 0;
 }
 
 static int mma7660fc_resume(struct i2c_client *client)
 {
+	if (!IS_ERR(accel_1v8))
+		regulator_enable(accel_1v8);
+	if (!IS_ERR(accel_vcc))
+		regulator_enable(accel_vcc);
+
 //	struct mma7660fc_data *data = i2c_get_clientdata(client);
 //	if (data->opencount) {
 //		mma7660fc_set_mode(MMA7660FC_MODE_MEASURE);

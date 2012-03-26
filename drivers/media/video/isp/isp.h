@@ -329,6 +329,11 @@ struct isp_pipeline {
 	 ((isp)->pipeline.modules & OMAP_ISP_PREVIEW) && \
 	 !((isp)->pipeline.modules & OMAP_ISP_RESIZER))
 
+#define CCDC_RESZ_CAPTURE(isp) \
+	(((isp)->pipeline.modules & OMAP_ISP_CCDC) && \
+	 !((isp)->pipeline.modules & OMAP_ISP_PREVIEW) && \
+	 ((isp)->pipeline.modules & OMAP_ISP_RESIZER))
+
 #define CCDC_PREV_RESZ_CAPTURE(isp) \
 	(((isp)->pipeline.modules & OMAP_ISP_CCDC) && \
 	 ((isp)->pipeline.modules & OMAP_ISP_PREVIEW) && \

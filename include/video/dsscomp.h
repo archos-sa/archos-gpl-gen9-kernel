@@ -299,6 +299,7 @@ struct dss2_decim {
  * 5) vc1.range_y and vc1.range_uv only needs to be filled if
  *    vc1.enable is true.
  */
+
 struct dss2_ovl_cfg {
 	__u16 width;	/* buffer width */
 	__u16 height;	/* buffer height */
@@ -616,5 +617,7 @@ struct dsscomp_isr_cfg {
 #define DSSCOMP_ISR_PUT	        _IOWR('O', 143, struct dsscomp_buffer )
 #define DSSCOMP_ISR_GET		_IOWR('O', 144, struct dsscomp_buffer )
 #define DSSCOMP_ISR_FLUSH	_IO  ('O', 145  )
+#define DSSCOMP_ISR_RESUME	_IO  ('O', 146  )
+#define DSSCOMP_ISR_SUSPEND	_IO  ('O', 147  )
 
 #endif

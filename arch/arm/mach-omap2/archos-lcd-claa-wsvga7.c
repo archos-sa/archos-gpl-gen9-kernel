@@ -30,7 +30,7 @@
 
 static struct archos_disp_conf display_gpio;
 static int panel_state;
-static int vcom_val = 130;
+static int vcom_val = 140;
 static struct omap_dm_timer *vcom_timer;
 static bool have_panel;
 
@@ -156,6 +156,7 @@ static void panel_disable(struct omap_dss_device *disp)
 	panel_state = 0;
 }
 
+#if 0
 static int panel_set_vcom(struct omap_dss_device *disp, u32 vcom)
 {
 	pr_debug("panel_set_vcom [%s]\n", disp->name);
@@ -173,6 +174,7 @@ static int panel_get_vcom(struct omap_dss_device *disp)
 
 	return vcom_val;
 }
+#endif
 
 static struct platform_device lcd_device = {
 	.name           = "lcd_panel",

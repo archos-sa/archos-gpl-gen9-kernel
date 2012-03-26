@@ -50,5 +50,7 @@ void dsscomp_drop_unlocked(dsscomp_t c);
 void dsscomp_release_active_comps(void);
 /* retrieve display index from overlay manager */
 u32 dsscomp_get_display_index(struct omap_overlay_manager *mgr);
+void dsscomp_release_same_comps(struct dsscomp_data *comp);
+void dsscomp_release_all_comps(void);
 
 #endif

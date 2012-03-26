@@ -17,6 +17,9 @@
 #ifndef _HOST_OS_H_
 #define _HOST_OS_H_
 
+// undef this for full dspbridge debug
+//#define DEBUG
+
 #include <asm/system.h>
 #include <asm/atomic.h>
 #include <linux/semaphore.h>

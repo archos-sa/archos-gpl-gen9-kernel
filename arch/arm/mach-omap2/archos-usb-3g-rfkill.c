@@ -71,7 +71,7 @@ extern int is_ehci_port0_connected(void);
 static int archos_usb_3g_resume(struct platform_device *pdev)
 {
 	struct archos_3g_rfkill_device *rfkill_dev = &archos_3g_rfkill;
-	bool dongle_connected = is_ehci_port0_connected();
+//	bool dongle_connected = is_ehci_port0_connected();
 
 #ifdef USB_OFF_WHEN_SUSPENDED
 	if (rfkill_dev->state && rfkill_dev->gpio_pwron > 0)
@@ -99,16 +99,16 @@ static struct platform_driver archos_usb_3g_driver = {
 int __init archos_usb_3g_rfkill_init(void)
 {
 	struct archos_3g_rfkill_device *rfkill_dev = &archos_3g_rfkill;
-	const struct archos_usb_config * usb_cfg;
-	const struct archos_usb_conf * cfg;
+	const struct archos_3g_config * usb_3g_cfg;
+	const struct archos_3g_conf * cfg;
 	struct platform_device *pdev;
 	int ret;
 	
-	usb_cfg = omap_get_config( ARCHOS_TAG_USB, struct archos_usb_config );
-	if (!usb_cfg)
+	usb_3g_cfg = omap_get_config( ARCHOS_TAG_3G, struct archos_3g_config );
+	if (!usb_3g_cfg)
 		return -ENODEV;
 	
-	cfg = hwrev_ptr(usb_cfg, hardware_rev);
+	cfg = hwrev_ptr(usb_3g_cfg, hardware_rev);
 	if (IS_ERR(cfg)) {
 		pr_err("%s: no device configuration for hardware_rev %i\n",
 				DEVICE_NAME, hardware_rev);	
@@ -139,7 +139,7 @@ int __init archos_usb_3g_rfkill_init(void)
 		goto initfail3;
 	}
 
-	if ((rfkill_dev->gpio_pwron = cfg->enable_5v) > 0) {
+	if ((rfkill_dev->gpio_pwron = cfg->enable) > 0) {
 		ret = gpio_request(rfkill_dev->gpio_pwron, "L3G_PWRON");
 		if (ret) {
 			dev_err(&pdev->dev, "Cannot request GPIO %d\n", rfkill_dev->gpio_pwron);

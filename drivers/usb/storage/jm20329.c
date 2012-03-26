@@ -288,12 +288,19 @@ static inline int jm20329_do_sleep(struct jm20329_device *dev)
 
 static bool jm20329_check_sleep_state(struct jm20329_device *dev)
 {
+	int i=0;
 	mutex_lock(&dev->dev_mutex);
 	if (dev->state == JM20329_ASLEEP) {
 		while (dev->in_transition != JM20329_NONE) {
 			mutex_unlock(&dev->dev_mutex);
-			schedule();
+			msleep(10);
 			mutex_lock(&dev->dev_mutex);
+			if ((i++>50) && (&dev->parent) && (&dev->parent->dev)) {
+				printk("%s: USB disconnect missed? Triggering USB to find out.\n", __func__);
+				i=0;
+				pm_runtime_get_sync(&dev->parent->dev);
+				pm_runtime_put_sync(&dev->parent->dev);
+			}
 		}
 		dev->in_transition = JM20329_ONGOING;
 		mutex_unlock(&dev->dev_mutex);
@@ -329,7 +336,8 @@ static void jm20329_suspend_resume_hook(struct us_data *us, int state)
 		}
 		mutex_unlock(&jm20329->dev_mutex);
 
-		usb_set_device_state(interface_to_usbdev(us->pusb_intf), USB_STATE_SUSPENDED);
+		if (us->pusb_intf)
+			usb_set_device_state(interface_to_usbdev(us->pusb_intf), USB_STATE_SUSPENDED);
 
 		printk("Sending hdd to sleep\n");
 		result = usb_stor_ata_sleep(us);
@@ -400,6 +408,13 @@ static int jm20329_control_thread(void * __us)
 		time = jiffies_to_msecs(jiffies);
 		oldtime = time;
 		dev->timeout = dev->timeout_reset;	// We are working so let's reset the timeout
+
+		if (dev->state == JM20329_RELEASE) {	// We are done here
+			mutex_unlock(&dev->dev_mutex);
+			US_DEBUGP("-- exiting\n");
+			break;
+		}
+
 		mutex_unlock(&dev->dev_mutex);
 
 		US_DEBUGP("*** thread awakened.\n");
@@ -529,17 +544,23 @@ static void jm20329_usb_disconnect(struct usb_interface *intf)
 	struct jm20329_device *jm20329 = us->extra;
 
 	US_DEBUGP("%s called\n", __FUNCTION__);
-	
+
 	if (jm20329) {
 		mutex_lock(&jm20329->dev_mutex);
 		if (jm20329->state == JM20329_ASLEEP) {
+			/* neded to because of hub internal debouncing,
+			 * an immediate resume could otherwise be ignored
+			 */
+			msleep(100);
 			jm20329->in_transition = JM20329_NONE;
 			mutex_unlock(&jm20329->dev_mutex);
 			usb_set_device_state(interface_to_usbdev(intf), USB_STATE_SUSPENDED);
+			jm20329->us->pusb_dev = NULL;
 			return;
 		} else {
 			mutex_unlock(&jm20329->dev_mutex);
 			printk("Warning: final disconnect\n");
+			jm20329->us->pusb_dev = NULL;
 		}
 	}
 	
@@ -581,6 +602,7 @@ static int jm20329_acquire_resources(struct us_data *us)
 /* Release all our dynamic resources */
 static void jm20329_release_resources(struct us_data *us)
 {
+	struct jm20329_device* dev = us->extra;
 	US_DEBUGP("-- %s\n", __func__);
 
 	/* Tell the control thread to exit.  The SCSI host must
@@ -588,6 +610,9 @@ static void jm20329_release_resources(struct us_data *us)
 	 * so that we won't accept any more commands.
 	 */
 	US_DEBUGP("-- sending exit command to thread\n");
+	mutex_lock(&dev->dev_mutex);
+	dev->state=JM20329_RELEASE;
+	mutex_unlock(&dev->dev_mutex);
 	complete(&us->cmnd_ready);
 	if (us->ctl_thread)
 		kthread_stop(us->ctl_thread);
@@ -1114,9 +1139,33 @@ static int jm20329_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static void jm20329_shutdown(struct platform_device *pdev)
+{
+	struct jm20329_device *jm20329 = platform_get_drvdata(pdev);
+
+	if (jm20329->us && jm20329->us->pusb_dev) {
+		struct usb_device *udev = jm20329->us->pusb_dev;
+		usb_lock_device(udev);
+		udev->autosuspend_delay = 1;
+		usb_try_autosuspend_device(udev);
+		//usb_autosuspend_device(udev);
+		usb_unlock_device(udev);
+	}
+
+	mutex_lock(&jm20329->dev_mutex);
+	jm20329->timeout = 0;
+	while (jm20329->state != JM20329_ASLEEP && jm20329->state != JM20329_RELEASE) {
+		mutex_unlock(&jm20329->dev_mutex);
+		schedule_timeout(HZ/10);
+		mutex_lock(&jm20329->dev_mutex);
+	}	
+	mutex_unlock(&jm20329->dev_mutex);
+}
+
 static struct platform_driver jm20329_driver = {
 	.probe			= jm20329_probe,
 	.remove			= jm20329_remove,
+	.shutdown		= jm20329_shutdown,
 	.driver = {
 		.name = "jm20329",
 		.owner = THIS_MODULE,

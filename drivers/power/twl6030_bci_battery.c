@@ -302,7 +302,7 @@ static void twl6030_config_iterm_reg(struct twl6030_bci_device_info *di,
 						unsigned int term_currentmA)
 {
 	if ((term_currentmA > 400) || (term_currentmA < 50)) {
-		dev_dbg(di->dev, "invalid termination current\n");
+		dev_dbg(di->dev, "invalid termination current %d\n", term_currentmA);
 		return;
 	}
 
@@ -651,8 +651,10 @@ static irqreturn_t twl6030charger_ctrl_interrupt(int irq, void *_di)
 		dev_dbg(di->dev, "Battery removed\n");
 	if (stat_reset & CONTROLLER_STAT1_BAT_REMOVED)
 		dev_dbg(di->dev, "Battery inserted\n");
-	if (stat_set & CONTROLLER_STAT1_BAT_TEMP_OVRANGE)
+	if (stat_set & CONTROLLER_STAT1_BAT_TEMP_OVRANGE) {
+		charger_fault = 1;
 		dev_dbg(di->dev, "Battery temperature overrange\n");
+	}
 	if (stat_reset & CONTROLLER_STAT1_BAT_TEMP_OVRANGE)
 		dev_dbg(di->dev, "Battery temperature within range\n");
 
@@ -2105,7 +2107,7 @@ static int __devinit twl6030_bci_battery_probe(struct platform_device *pdev)
 	/* initialize for USB charging */
 	twl6030_config_limit1_reg(di, pdata->max_charger_voltagemV);
 	twl6030_config_limit2_reg(di, di->max_charger_currentmA);
-	twl_i2c_write_u8(TWL6030_MODULE_CHARGER, MBAT_TEMP,
+	twl_i2c_write_u8(TWL6030_MODULE_CHARGER, 0,
 						CONTROLLER_INT_MASK);
 	twl_i2c_write_u8(TWL6030_MODULE_CHARGER, MASK_MCHARGERUSB_THMREG,
 						CHARGERUSB_INT_MASK);
@@ -2114,7 +2116,7 @@ static int __devinit twl6030_bci_battery_probe(struct platform_device *pdev)
 		CONTROLLER_STAT1);
 	di->stat1 = controller_stat;
 
-	/* Try to preserve avboots charger detection */
+	/* Try to preserve avboot's charger detection */
 	twl_i2c_read_u8(TWL6030_MODULE_CHARGER, &cin_limit_preboot, CHARGERUSB_CINLIMIT);
 	di->charger_incurrentmA = ((0x0F & cin_limit_preboot)*50)+50;	// calculate current from register value
 #ifdef CONFIG_MACH_ARCHOS

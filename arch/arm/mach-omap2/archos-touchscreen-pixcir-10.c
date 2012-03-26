@@ -86,9 +86,12 @@ int __init archos_touchscreen_pixcir_init(struct pixcir_platform_data *pdata)
 
 			if (conf->irq_signal)
 				omap_mux_init_signal(conf->irq_signal,
-						OMAP_PIN_INPUT);
+						OMAP_PIN_INPUT
+						| OMAP_PIN_OFF_WAKEUPENABLE);
 			else
-				omap_mux_init_gpio(conf->irq_gpio, PIN_INPUT);
+				omap_mux_init_gpio(conf->irq_gpio, 
+						OMAP_PIN_INPUT
+						| OMAP_PIN_OFF_WAKEUPENABLE);
 
 			gpio_export(conf->irq_gpio, false);
 		} else {

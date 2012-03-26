@@ -109,14 +109,34 @@ static int ov7675_sensor_power_set(struct v4l2_int_device *s, enum v4l2_power po
 		/* Power Down Sequence */
 		/* PWDN is active HIGH */
 		gpio_set_value(pwdn_gpio, 1);
-		if (previous_power != V4L2_POWER_OFF)
+		if (previous_power != V4L2_POWER_OFF) {
 			isp_disable_mclk(isp);
+			regulator_disable(vdda);
+		}
+		/* Wait a little */
+		msleep(10);
+		/* Also set the PWDN gpio to LOW because it
+		 * leaks into the 1V8 CAM power supply
+		 */
+		gpio_set_value(pwdn_gpio, 0);
+		/* And wait a little again */
+		msleep(100);
 		break;
 		
 	case V4L2_POWER_STANDBY:
 	case V4L2_POWER_ON:
 		printk("ov7675_sensor_power_set : Power ON...\n");
 		if (previous_power == V4L2_POWER_OFF) {
+
+			/* PWDN (active high) needs to be enabled before any power supply */
+			gpio_set_value(pwdn_gpio, 1);
+			/* Wait a little */
+			msleep(10);
+			/* Reset the chip to be sure it is in a sane state (some A70S2 have
+			 * issues when the power supply is never cut).
+			 */
+			//msleep(10);
+			regulator_enable(vdda);
 
 			/* Power Up Sequence */
 			isp_configure_interface(vdev->cam->isp, &ov7675_if_config);
@@ -208,6 +228,7 @@ static int omap_ov7675_isp_remove(struct platform_device *pdev)
 	gpio_set_value(reset_gpio, 1);
 	gpio_set_value(pwdn_gpio, 1);
 #endif
+	regulator_put(vdda);
 
 	return 0;
 }
@@ -228,8 +249,8 @@ static int omap_ov7675_isp_resume(struct platform_device *pdev)
 static struct platform_driver omap_ov7675_isp_driver = {
 	.probe		= omap_ov7675_isp_probe,
 	.remove		= omap_ov7675_isp_remove,
-//	.suspend_late	= omap_ov7675_isp_suspend,
-//	.resume_early	= omap_ov7675_isp_resume,
+	.suspend	= omap_ov7675_isp_suspend,
+	.resume		= omap_ov7675_isp_resume,
 	.driver		= {
 		.name	= OMAP_OV7675_ISP_DEV_NAME,
 	},

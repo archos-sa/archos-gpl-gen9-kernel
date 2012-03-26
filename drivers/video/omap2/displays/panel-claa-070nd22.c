@@ -111,8 +111,8 @@ static struct omap_video_timings claa_panel_timings = {
 		.pixel_clock	= CLAA_LCD_PIXCLOCK,	/* Mhz */
 // 60hz
 		.hsw		= 2,		/* horizontal sync pulse width */
-		.hfp		= 118,		/* horizontal front porch */
-		.hbp		= 200,		/* horizontal back porch */
+		.hfp		= 298,		/* horizontal front porch */
+		.hbp		= 20,		/* horizontal back porch */
 		.vsw		= 4,		/* vertical sync pulse width */
 		.vfp		= 26,		/* vertical front porch */
 		.vbp		= 5,		/* vertical back porch */

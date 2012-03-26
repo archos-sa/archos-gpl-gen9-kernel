@@ -1131,7 +1131,6 @@ int do_setup_device_details(u32 emif_nr,
 	if (emif_temperature_level[emif_nr] >= SDRAM_TEMP_VERY_HIGH_SHUTDOWN) {
 		pr_emerg("EMIF %d: SDRAM temperature exceeds operating"
 			 "limit.. Needs shutdown...\n", emif_nr + 1);
-		machine_restart(NULL);
 	}
 
 	return 0;
@@ -1232,6 +1231,15 @@ static int __init omap_emif_late_init(void)
 	voltdm = omap_voltage_domain_get("core");
 
 	omap_voltage_register_notifier(voltdm, &emif_volt_notifier_block);
+
+	if ((emif_temperature_level[EMIF1] >= SDRAM_TEMP_VERY_HIGH_SHUTDOWN) ||
+		(emif_temperature_level[EMIF2] >= SDRAM_TEMP_VERY_HIGH_SHUTDOWN)) {
+		pr_emerg("SDRAM BOOT temperature exceeds operating"
+			"limit.. Shutdown system...\n");
+
+		kernel_power_off();
+	}
+
 	return 0;
 }
 late_initcall(omap_emif_late_init);

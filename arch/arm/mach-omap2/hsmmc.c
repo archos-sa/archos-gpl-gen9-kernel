@@ -325,6 +325,7 @@ void __init omap2_hsmmc_init(struct omap2_hsmmc_info *controllers)
 		mmc->slots[0].caps = c->caps;
 		mmc->slots[0].internal_clock = !c->ext_clock;
 		mmc->dma_mask = 0xffffffff;
+		mmc->max_freq = c->max_freq;
 
 		/* Register offset Mapping */
 		if (cpu_is_omap44xx())

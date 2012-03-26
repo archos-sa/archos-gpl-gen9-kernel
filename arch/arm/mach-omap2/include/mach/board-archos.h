@@ -42,6 +42,7 @@
 #include <linux/input/pixcir_i2c_tsp.h>
 #include <linux/input/goodix-gt80x.h>
 #include <linux/input/tr16c0-i2c.h>
+#include <linux/input/cpt_i2c_tsp.h>
 #include <asm/mach-types.h>
 
 struct omap_dss_device;
@@ -395,7 +396,9 @@ struct archos_compass_config
 struct archos_camera_conf
 {
 	int pwr_down;
+	const char *pwr_down_mux;
 	int reset;
+	const char *reset_mux;
 };
 
 struct archos_camera_config
@@ -591,30 +594,27 @@ struct archos_temp_duty_cycle_config
 };
 #define ARCHOS_TAG_TEMP_DUTY_CYCLE	0x4e1f
 
+struct archos_3g_config
+{
+	int	nrev;
+	struct archos_3g_conf {
+		int enable;
+	} rev[MAX_HWREVS];
+};
+#define ARCHOS_TAG_3G 0x4e20
+
 extern unsigned int hardware_rev;
 
-extern void usbsata_power(int on_off);
-extern void usbhdd_power(int on_off);
 
 extern int __init archos_accel_mma7660fc_init(struct mma7660fc_pdata *pdata);
 extern int __init archos_accel_mma8453q_init(struct mma8453q_pdata *pdata);
 
-extern int __init archos_usb2sata_init(void); 
 extern int __init ads7846_dev_init(void);
-extern int __init archos_keys_init(void);
 extern void __init fixup_archos(struct machine_desc *,
 		struct tag *, char **, struct meminfo *);
 
 extern void archos_power_off(void);
 
-extern int __init panel_qvga_28_init(struct omap_dss_device *);
-extern int __init panel_wqvga_32_init(struct omap_dss_device *);
-extern int __init panel_fwvga_43_init(struct omap_dss_device *);
-extern int __init panel_tpo_wvga_48_init(struct omap_dss_device *);
-extern int __init panel_cpt_wvga_48_init(struct omap_dss_device *);
-extern int __init archos_tvout_venc_init(struct omap_dss_device *);
-extern int __init archos_tvout_hdmi_init(struct omap_dss_device *);
-extern int __init archos_tvout_extdac_init(struct omap_dss_device *);
 extern int __init panel_boe_wsvga_10_init(struct omap_dss_device *);
 extern int __init panel_lg_wvga_7_init(struct omap_dss_device *);
 extern int __init panel_a35_init(struct omap_dss_device *);
@@ -623,20 +623,13 @@ extern int __init panel_auo_wxga_10_init(struct omap_dss_device *);
 extern int __init panel_claa_wsvga_7_init(struct omap_dss_device *);
 extern int __init panel_ivo_wxga_116_init(struct omap_dss_device *);
 
-
-extern int __init archos_wifi_bt_init(void);
-
-extern int __init archos_usbhdd_init(void);
-extern void __init archos_flash_init(void);
-
-extern int __init archos_vibrator_init(void);
-
 extern int __init archos_compass_init(struct akm8975_platform_data *pdata);
 
 extern int __init archos_touchscreen_tm340_init(struct cypress_tma340_platform_data *pdata);
 extern int __init archos_touchscreen_pixcir_init(struct pixcir_platform_data *pdata);
 extern int __init archos_touchscreen_tr16c0_init(struct tr16c0_platform_data *pdata);
 extern int __init archos_touchscreen_goodix_init(struct goodix_gt80x_platform_data *pdata);
+extern int __init archos_touchscreen_cpt_i2c_tsp_init(struct cpt_i2c_tsp_platform_data *pdata);
 
 extern int __init archos_camera_mt9m114_init(void);
 extern int __init archos_camera_mt9d113_init(void);

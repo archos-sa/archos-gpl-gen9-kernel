@@ -37,7 +37,7 @@
 #include "hsi_driver.h"
 
 #define HSI_MODULENAME "omap_hsi"
-#define	HSI_DRIVER_VERSION	"0.4.2"
+#define	HSI_DRIVER_VERSION	"0.4.3"
 #define HSI_RESETDONE_MAX_RETRIES	5 /* Max 5*L4 Read cycles waiting for */
 					  /* reset to complete */
 #define HSI_RESETDONE_NORMAL_RETRIES	1 /* Reset should complete in 1 R/W */
@@ -541,6 +541,7 @@ static int __init hsi_ports_init(struct hsi_dev *hsi_ctrl)
 		hsi_p->max_ch = hsi_driver_device_is_hsi(pd) ?
 		    HSI_CHANNELS_MAX : HSI_SSI_CHANNELS_MAX;
 		hsi_p->irq = 0;
+		hsi_p->wake_rx_3_wires_mode = 0; /* 4 wires */
 		hsi_p->cawake_status = -1; /* Unknown */
 		hsi_p->cawake_off_event = false;
 		hsi_p->acwake_status = 0;
@@ -638,6 +639,7 @@ void hsi_clocks_disable_channel(struct device *dev, u8 channel_number,
 {
 	struct platform_device *pd = to_platform_device(dev);
 	struct hsi_dev *hsi_ctrl = platform_get_drvdata(pd);
+	int ret;
 
 	if (channel_number != HSI_CH_NUMBER_NONE)
 		dev_dbg(dev, "CLK: hsi_clocks_disable for "
@@ -665,7 +667,9 @@ void hsi_clocks_disable_channel(struct device *dev, u8 channel_number,
 
 #ifndef USE_PM_RUNTIME_FOR_HSI
 	hsi_runtime_suspend(dev);
-	omap_device_idle(pd);
+	ret = omap_device_idle(pd);
+	if (ret)
+		dev_err(dev, "Failed to disable device: %s %d\n", s, ret);
 #else
 	/* HSI_TODO : this can probably be changed
 	 * to return pm_runtime_put(dev);
@@ -681,8 +685,9 @@ void hsi_clocks_disable_channel(struct device *dev, u8 channel_number,
 * @channel_number - channel number which requests clock to be enabled
 *		    0xFF means no particular channel
 *
-* Returns: -EEXIST if clocks were already active
+* Returns: 1 if clocks were already active
 *	   0 if clocks were previously inactive
+*	   < 0 if failed to activate clocks
 *
 * Note : there is no real HW clock management per HSI channel, this is only
 * virtual to keep track of active channels and ease debug
@@ -694,6 +699,7 @@ int hsi_clocks_enable_channel(struct device *dev, u8 channel_number,
 {
 	struct platform_device *pd = to_platform_device(dev);
 	struct hsi_dev *hsi_ctrl = platform_get_drvdata(pd);
+	int ret;
 
 	if (channel_number != HSI_CH_NUMBER_NONE)
 		dev_dbg(dev, "CLK: hsi_clocks_enable for "
@@ -703,7 +709,7 @@ int hsi_clocks_enable_channel(struct device *dev, u8 channel_number,
 
 	if (hsi_ctrl->clock_enabled) {
 		dev_dbg(dev, "Clocks already enabled, skipping...\n");
-		return -EEXIST;
+		return 1;
 	}
 #ifdef CONFIG_PM
 	/* Prevent Fclk change */
@@ -712,7 +718,11 @@ int hsi_clocks_enable_channel(struct device *dev, u8 channel_number,
 #endif /* CONFIG_PM */
 
 #ifndef USE_PM_RUNTIME_FOR_HSI
-	omap_device_enable(pd);
+	ret = omap_device_enable(pd);
+	if (ret < 0) {
+		dev_err(dev, "Failed to enable device: %s %d\n", s, ret);
+		return ret;
+	}
 	hsi_runtime_resume(dev);
 	return 0;
 #else
@@ -828,8 +838,14 @@ static int __init hsi_platform_device_probe(struct platform_device *pd)
 		goto rollback1;
 	}
 
+#ifdef USE_PM_RUNTIME_FOR_HSI
 	pm_runtime_enable(hsi_ctrl->dev);
-	hsi_clocks_enable(hsi_ctrl->dev, __func__);
+#endif
+	err = hsi_clocks_enable(hsi_ctrl->dev, __func__);
+	if (err < 0) {
+		dev_err(&pd->dev, "Could not enable clocks for hsi: %d\n", err);
+		goto rollback1;
+	}
 
 	/* Non critical SW Reset */
 	err = hsi_softreset(hsi_ctrl);
@@ -907,8 +923,9 @@ static int __exit hsi_platform_device_remove(struct platform_device *pd)
 	unregister_hsi_devices(hsi_ctrl);
 
 	/* From here no need for HSI HW access */
+#ifdef USE_PM_RUNTIME_FOR_HSI
 	pm_runtime_disable(hsi_ctrl->dev);
-
+#endif
 	hsi_debug_remove_ctrl(hsi_ctrl);
 	hsi_controller_exit(hsi_ctrl);
 
@@ -918,7 +935,23 @@ static int __exit hsi_platform_device_remove(struct platform_device *pd)
 }
 
 #ifdef CONFIG_SUSPEND
-static int hsi_suspend_noirq(struct device *dev)
+static int hsi_pm_prepare(struct device *dev)
+{
+	struct platform_device *pd = to_platform_device(dev);
+	struct hsi_dev *hsi_ctrl = platform_get_drvdata(pd);
+
+	dev_dbg(dev, "%s\n", __func__);
+
+	/* If HSI is busy, refuse the suspend */
+	if (hsi_ctrl->clock_enabled) {
+		dev_info(dev, "Platform prepare while HSI active\n");
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+static int hsi_pm_suspend(struct device *dev)
 {
 	struct hsi_platform_data *pdata = dev->platform_data;
 	struct platform_device *pd = to_platform_device(dev);
@@ -931,8 +964,8 @@ static int hsi_suspend_noirq(struct device *dev)
 	/* we don't want to re-enable it here. HSI interrupt shall be */
 	/* generated normally because HSI HW is ON. */
 	if (hsi_ctrl->clock_enabled) {
-		dev_info(dev, "Platform Suspend while HSI active\n");
-		return 0;
+		dev_info(dev, "Platform suspend while HSI active\n");
+		return -EBUSY;
 	}
 
 	/* Perform HSI board specific action before platform suspend */
@@ -944,7 +977,25 @@ static int hsi_suspend_noirq(struct device *dev)
 	return 0;
 }
 
-static int hsi_resume_noirq(struct device *dev)
+/* This callback can be useful in case an HSI interrupt occured between */
+/* ->suspend() phase and ->suspend_noirq() phase */
+static int hsi_pm_suspend_noirq(struct device *dev)
+{
+	struct platform_device *pd = to_platform_device(dev);
+	struct hsi_dev *hsi_ctrl = platform_get_drvdata(pd);
+
+	dev_dbg(dev, "%s\n", __func__);
+
+	/* If HSI is busy, refuse the suspend */
+	if (hsi_ctrl->clock_enabled) {
+		dev_info(dev, "Platform suspend_noirq while HSI active\n");
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+static int hsi_pm_resume(struct device *dev)
 {
 	struct hsi_platform_data *pdata = dev->platform_data;
 	struct platform_device *pd = to_platform_device(dev);
@@ -958,7 +1009,7 @@ static int hsi_resume_noirq(struct device *dev)
 	/* HSI IO checking in PRCM int handler is done when waking up from : */
 	/* - Device OFF mode (wake up from suspend) */
 	/* - L3INIT in RET (Idle mode) */
-	/* hsi_resume_noirq is called only when system wakes up from suspend. */
+	/* hsi_resume is called only when system wakes up from suspend. */
 	/* So HSI IO checking in PRCM int handler and hsi_resume_noirq are */
 	/* redundant. We need to choose which one will schedule the tasklet */
 	/* Since HSI IO checking in PRCM int handler covers more cases, it is */
@@ -1098,8 +1149,10 @@ MODULE_DEVICE_TABLE(platform, hsi_id_table);
 #ifdef CONFIG_PM
 static const struct dev_pm_ops hsi_driver_pm_ops = {
 #ifdef CONFIG_SUSPEND
-	.suspend_noirq = hsi_suspend_noirq,
-	.resume_noirq = hsi_resume_noirq,
+	.prepare = hsi_pm_prepare,
+	.suspend = hsi_pm_suspend,
+	.suspend_noirq = hsi_pm_suspend_noirq,
+	.resume = hsi_pm_resume,
 #endif
 #ifdef CONFIG_PM_RUNTIME
 	.runtime_suspend = hsi_runtime_suspend,

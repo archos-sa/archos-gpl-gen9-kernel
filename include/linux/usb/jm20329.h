@@ -10,7 +10,8 @@ struct us_data;
 enum jm20329_status {
 	JM20329_AWAKE = 0,
 	JM20329_ASLEEP = 1,
-	JM20329_DO_SLEEP = 2
+	JM20329_DO_SLEEP = 2,
+	JM20329_RELEASE = 3
 };
 
 enum jm20329_transition {

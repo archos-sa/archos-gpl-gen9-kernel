@@ -2536,6 +2536,9 @@ static void _dispc_set_rotation_attrs(enum omap_plane plane, u8 rotation,
 			else
 				REG_FLD_MOD(dispc_reg_att[plane], 0x1, 22, 22);
 		}
+		if ((rotation != 0) && !cpu_is_omap44xx())
+			//Video layer is rotated, so increase GFX priority
+			REG_FLD_MOD(dispc_reg_att[OMAP_DSS_GFX], 1, 14, 14);
 	}
 }
 

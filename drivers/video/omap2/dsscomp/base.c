@@ -355,16 +355,19 @@ int set_dss_ovl_info(struct dss2_ovl_info *oi)
 			info.rotation_type = OMAP_DSS_ROT_DMA;
 		} else {
 #if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
-			u32 new_paddr;
+			u32 new_paddr, old_paddr;
 #endif
 			info.mirror = cfg->mirror;
 			info.rotation = cfg->rotation;
 			info.rotation_type = OMAP_DSS_ROT_VRFB;
 #if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
-			if (!cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height)) {
+			old_paddr = info.paddr;
+			ret = cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height, &info.screen_width);
+			if (ret == 0){
 				info.paddr = new_paddr;
-				info.screen_width = 2048;
 			}
+			ret = cma_is_buffer_ready(old_paddr, true);
+			if (ret == -ETIME) goto quit;
 #endif
 		}
 	}
@@ -627,10 +630,14 @@ int set_dss_ovl_addr(struct dsscomp_buffer *buf)
 				info.rotation = cfg->rotation;
 				info.rotation_type = OMAP_DSS_ROT_VRFB;
 #if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
-				if (!cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height))
+				r = cma_set_output_buffer(info.paddr, &new_paddr, cfg->rotation, cfg->mirror, &info.width, &info.height, &info.screen_width);
+				if (r == 0)
 				{
 					info.paddr = new_paddr;
-					info.screen_width = 2048;
+				} else {
+					if (r == -ETIME)
+						goto quit;
+					r = 0;
 				}
 #endif
 			}
@@ -691,7 +698,7 @@ done:
 	if( mgr ) {
 		return mgr->apply(mgr);
 	}
-	
+quit:
 	return r;
 }
 

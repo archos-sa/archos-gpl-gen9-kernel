@@ -61,13 +61,27 @@ static struct clk *phyclk, *clk48m, *clk32k;
 static void __iomem *ctrl_base;
 static void __iomem *scm_base;
 
+#ifdef CONFIG_OMAP4_HSOTG_ED_CORRECTION
+#define OMAP4_HSOTG_SWTRIM_MASK		0xFFFF00FF
+#endif
+static void __iomem *hsotg_base;
+
 int omap4430_phy_init(struct device *dev)
 {
 	u32 v;	
 	
+#ifdef CONFIG_OMAP4_HSOTG_ED_CORRECTION
+	hsotg_base = ioremap(OMAP44XX_HSUSB_OTG_BASE, SZ_16K);
+	if (!hsotg_base) {
+		dev_err(dev, "hsotg memory ioremap failed\n");
+		return -ENOMEM;
+	}
+#endif
+
 	scm_base = ioremap(OMAP443X_SCM_BASE, SZ_1K);
 	if (!scm_base) {
 		dev_err(dev, "scm module ioremap failed\n");
+		iounmap(hsotg_base);
 		return -ENOMEM;
 	}
 
@@ -86,6 +100,7 @@ int omap4430_phy_init(struct device *dev)
 		dev_err(dev, "cannot clk_get ocp2scp_usb_phy_ick\n");
 		iounmap(scm_base);
 		iounmap(ctrl_base);
+		iounmap(hsotg_base);
 		return PTR_ERR(phyclk);
 	}
 
@@ -95,6 +110,7 @@ int omap4430_phy_init(struct device *dev)
 		clk_put(phyclk);
 		iounmap(scm_base);		
 		iounmap(ctrl_base);
+		iounmap(hsotg_base);
 		return PTR_ERR(clk48m);
 	}
 
@@ -105,11 +121,72 @@ int omap4430_phy_init(struct device *dev)
 		clk_put(clk48m);
 		iounmap(scm_base);
 		iounmap(ctrl_base);
+		iounmap(hsotg_base);
 		return PTR_ERR(clk32k);
 	}
 	
 	return 0;
 }
+
+#ifdef CONFIG_OMAP4_HSOTG_ED_CORRECTION
+static void omap44xx_hsotg_ed_correction(void)
+{
+	u32 val;
+
+	/*    Software workaround #1
+	 * By this way we improve HS OTG
+	 * eye diagramm by 2-3%
+	 * Allow this change for all OMAP4 family
+	 */
+
+	/* For prevent 4-bit shift issue
+	 * bit field SYNC2 of OCP2SCP_TIMING
+	 * should be set to value >6
+	 */
+
+	val = __raw_readl(hsotg_base + 0x2018);
+	val |= 0x0F;
+	__raw_writel(val, hsotg_base + 0x2018);
+
+	/*
+	 * USBPHY_ANA_CONFIG2[16:15] = RTERM_TEST = 11b
+	 */
+	val = __raw_readl(hsotg_base + 0x20D4);
+	val |= (3<<15);
+	__raw_writel(val, hsotg_base + 0x20D4);
+
+	/*
+	 * USBPHY_TERMINATION_CONTROL[13:11] = HS_CODE_SEL = 011b
+	 */
+	val = __raw_readl(hsotg_base + 0x2080);
+	val &= ~(7<<11);
+	val |= (3<<11);
+	__raw_writel(val, hsotg_base + 0x2080);
+
+	/*    Software workaround #2
+	 * Reducing interface output impedance
+	 * By this way we improve HS OTG
+	 * eye diagramm by 8%
+	 * This change needed only for 4430 CPUs
+	 * because this change can impact Rx performance
+	 */
+
+	/*
+	 * Override SWCAP trim code by 0x24
+	 * NOTE: Value should be between 0 and 0x24
+	 */
+#ifdef CONFIG_OMAP4_HSOTG_ED_SW2_4460
+	if (true) {
+#else
+	if (is_omap443x()) {
+#endif
+		val = __raw_readl(hsotg_base + 0x20B8);
+		val &= OMAP4_HSOTG_SWTRIM_MASK;
+		val |= (0x8000 | (0x24<<8));
+		__raw_writel(val, hsotg_base + 0x20B8);
+	}
+}
+#endif
 
 int omap4430_phy_set_clk(struct device *dev, int on)
 {
@@ -185,6 +262,10 @@ int omap4430_phy_power(struct device *dev, int ID, int on)
 	if (on) {
 		/* enabled the clocks */
 		omap4430_phy_set_clk(dev, 1);
+#ifdef CONFIG_OMAP4_HSOTG_ED_CORRECTION
+		/* apply eye diagram improvement settings */
+		omap44xx_hsotg_ed_correction();
+#endif
 		/* power on the phy */
 		if (__raw_readl(scm_base + CONTROL_DEV_CONF) & PHY_PD) {
 			__raw_writel(~PHY_PD, scm_base + CONTROL_DEV_CONF);
@@ -222,6 +303,8 @@ int omap4430_phy_exit(struct device *dev)
 		iounmap(ctrl_base);
 	if (scm_base)
 		iounmap(scm_base);
+	if (hsotg_base)
+		iounmap(hsotg_base);
 	if (phyclk)
 		clk_put(phyclk);
 	if (clk48m)

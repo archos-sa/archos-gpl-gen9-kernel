@@ -71,7 +71,8 @@ static long omaplfb_ioctl(struct file *filp, unsigned int cmd,
 		if (r)
 			break;
 		r = omaplfb_enable_cloning(clone_cmd.mgr_id_src,
-			clone_cmd.mgr_id_dst, OMAPLFB_CLONING_BUFFER_NUM);
+			clone_cmd.mgr_id_dst, OMAPLFB_CLONING_BUFFER_NUM, clone_cmd.dst_ovls,
+			clone_cmd.nb_dst);
 		break;
 	}
 	case OMAPLFB_CLONING_DISABLE:
@@ -90,6 +91,18 @@ static long omaplfb_ioctl(struct file *filp, unsigned int cmd,
 		if (r)
 			break;
 		r = omaplfb_dsscomp_setup(&info);
+		break;
+	}
+	case OMAPLFB_DSSCOMP_FLUSH:
+	{
+		dsscomp_release_all_comps();
+		break;
+	}
+	case OMAPLFB_FLUSH_COMP:
+	{
+		int display;
+		r = copy_from_user(&display, ptr, sizeof(int));
+		omaplfb_flush_comp (display);
 		break;
 	}
 

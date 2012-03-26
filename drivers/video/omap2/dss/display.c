@@ -228,10 +228,12 @@ static ssize_t display_timings_show(struct device *dev,
 
 	dssdev->driver->get_timings(dssdev, &t);
 
-	return snprintf(buf, PAGE_SIZE, "%u,%u/%u/%u/%u,%u/%u/%u/%u\n",
+	return snprintf(buf, PAGE_SIZE, "%u,%u/%u/%u/%u,%u/%u/%u/%u,%u/%u\n",
 			t.pixel_clock,
 			t.x_res, t.hfp, t.hbp, t.hsw,
-			t.y_res, t.vfp, t.vbp, t.vsw);
+			t.y_res, t.vfp, t.vbp, t.vsw,
+			dssdev->panel.config & OMAP_DSS_LCD_IHS ? 1:0,
+			dssdev->panel.config & OMAP_DSS_LCD_IVS ? 1:0);
 }
 
 static ssize_t display_timings_store(struct device *dev,
@@ -240,6 +242,7 @@ static ssize_t display_timings_store(struct device *dev,
 	struct omap_dss_device *dssdev = to_dss_device(dev);
 	struct omap_video_timings t;
 	int r, found;
+	int nval = 0, h_pol = 0, v_pol = 0;
 
 	if (!dssdev->driver->set_timings || !dssdev->driver->check_timings)
 		return -ENOENT;
@@ -254,11 +257,22 @@ static ssize_t display_timings_store(struct device *dev,
 		found = 1;
 	}
 #endif
-	if (!found && sscanf(buf, "%u,%hu/%hu/%hu/%hu,%hu/%hu/%hu/%hu",
+	if (!found && (nval = sscanf(buf, "%u,%hu/%hu/%hu/%hu,%hu/%hu/%hu/%hu,%u/%u",
 				&t.pixel_clock,
 				&t.x_res, &t.hfp, &t.hbp, &t.hsw,
-				&t.y_res, &t.vfp, &t.vbp, &t.vsw) != 9)
+				&t.y_res, &t.vfp, &t.vbp, &t.vsw, 
+				&h_pol, &v_pol)) < 9) {
 		return -EINVAL;
+	}
+
+	if (nval == 11) {
+		dssdev->panel.config &= ~(OMAP_DSS_LCD_IHS | OMAP_DSS_LCD_IVS);
+		if (h_pol)
+			dssdev->panel.config |= OMAP_DSS_LCD_IHS;
+		if (v_pol)
+			dssdev->panel.config |= OMAP_DSS_LCD_IVS;
+
+	}
 
 	r = dssdev->driver->check_timings(dssdev, &t);
 	if (r)
@@ -458,15 +472,12 @@ static ssize_t display_hpd_enabled_store(struct device *dev,
 
 	enabled = simple_strtoul(buf, NULL, 10);
 
-	if (enabled != (dssdev->state != OMAP_DSS_DISPLAY_DISABLED)) {
-		if (enabled) {
-			r = dssdev->driver->hpd_enable(dssdev);
-			if (r)
-				return r;
-		} else {
-			dssdev->driver->disable(dssdev);
-		}
-	}
+	if (enabled) {
+		r = dssdev->driver->hpd_enable(dssdev);
+		if (r)
+			return r;
+	} else
+		dssdev->driver->disable(dssdev);
 
 	return size;
 }

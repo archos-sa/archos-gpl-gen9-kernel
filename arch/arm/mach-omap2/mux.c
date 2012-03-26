@@ -35,6 +35,8 @@
 
 #include <asm/system.h>
 
+#include <mach/gpio.h>
+
 #include <plat/control.h>
 #include "mux.h"
 
@@ -90,7 +92,7 @@ static void omap_mux_write_array(struct omap_mux_partition *partition,
 
 static char *omap_mux_options;
 
-static int __init _omap_mux_init_gpio(struct omap_mux_partition *partition,
+static int _omap_mux_init_gpio(struct omap_mux_partition *partition,
 				      int gpio, int val)
 {
 	struct omap_mux_entry *e;
@@ -100,7 +102,7 @@ static int __init _omap_mux_init_gpio(struct omap_mux_partition *partition,
 	int found = 0;
 	struct list_head *muxmodes = &partition->muxmodes;
 
-	if (!gpio)
+	if (!gpio_is_valid(gpio))
 		return -EINVAL;
 
 	list_for_each_entry(e, muxmodes, node) {
@@ -134,7 +136,7 @@ static int __init _omap_mux_init_gpio(struct omap_mux_partition *partition,
 	return 0;
 }
 
-int __init omap_mux_init_gpio(int gpio, int val)
+int omap_mux_init_gpio(int gpio, int val)
 {
 	struct omap_mux_partition *partition;
 	int ret;

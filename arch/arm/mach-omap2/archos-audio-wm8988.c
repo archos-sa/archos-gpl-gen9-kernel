@@ -238,6 +238,25 @@ int __init archos_audio_wm8988_init(void)
 	clk_put(clkout2_src_ck);
 	clk_put(core_ck);
 
+	/* McBSP2 mux */
+	omap_mux_init_signal("mcbsp2_clkx", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp2_dr", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp2_dx", OMAP_PIN_OUTPUT);
+	omap_mux_init_signal("mcbsp2_fsx", OMAP_PIN_INPUT);
+
+	/* McBSP3 mux */
+	/* omap_mux_init_signal("mcbsp3_clkx", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp3_dr", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp3_dx", OMAP_PIN_OUTPUT);
+	omap_mux_init_signal("mcbsp3_fsx", OMAP_PIN_INPUT);
+	*/
+
+	/* McBSP4 mux */
+	omap_mux_init_signal("mcbsp4_clkx.mcbsp4_clkx", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp4_dr.mcbsp4_dr", OMAP_PIN_INPUT);
+	omap_mux_init_signal("mcbsp4_dx.mcbsp4_dx", OMAP_PIN_OUTPUT);
+	omap_mux_init_signal("mcbsp4_fsx.mcbsp4_fsx", OMAP_PIN_INPUT);
+
 	if (audio_gpio.spdif != -1)
 		archos_gpio_init_output( audio_gpio.spdif, "spdif" );
 

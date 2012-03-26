@@ -21,6 +21,7 @@
 
 #include <linux/err.h>
 #include <linux/slab.h>
+#include <linux/io.h>
 #include <linux/list.h>
 #include <linux/uaccess.h>
 
@@ -32,6 +33,20 @@
 #include "dsscomp.h"
 #include <mach/tiler.h>
 #include <media/cma.h>
+
+#include "../dss/dss.h"
+
+
+#define DISPC_BASE			0x48050400
+#define DISPC_LINE_NUMBER		0x0060
+
+static inline void enable_clocks(bool enable)
+{
+	if (enable)
+		dss_clk_enable(DSS_CLK_ICK | DSS_CLK_FCK1);
+	else
+		dss_clk_disable(DSS_CLK_ICK | DSS_CLK_FCK1);
+}
 
 int debug_isr;
 module_param(debug_isr, int, 0644);
@@ -54,6 +69,13 @@ static DEFINE_SPINLOCK(frame_queue_lock);
 static struct dsscomp_buffer_internal *current_frame;
 static struct dsscomp_buffer_internal *next_frame;
 
+static void *dispc_base = NULL;
+
+static inline void dispc_write_reg(u32 idx, u32 val)
+{
+	__raw_writel(val, (u32)dispc_base + idx);
+}
+
 static inline unsigned long get_reftime(struct dsscomp_dev *cdev, unsigned long *next )
 {
 	unsigned long long s = cdev->vsync_cnt * (__u64)cdev->scale;
@@ -75,9 +97,8 @@ static void dsscomp_isr(void *data, u32 mask)
 	while (!list_empty(&pending_queue)) {
 		unsigned long time_next;
 		unsigned long time_now = get_reftime( cdev, &time_next );
-		
+		int not_ready = 0;
 		struct dsscomp_buffer_internal *next = list_entry(pending_queue.next, struct dsscomp_buffer_internal, node);
-		
 		if( time_before( (unsigned long)next->b.ts, time_now ) ) {
 			if(debug_isr) 
 				dev_info(DEV(cdev), "DROP[%2d]  %8lu < %8lu\n", next->b.id, (unsigned long)next->b.ts, time_now );
@@ -93,20 +114,29 @@ static void dsscomp_isr(void *data, u32 mask)
 				dev_info(DEV(cdev), "SHOW[%2d]  %8u < %8lu  %08X\r\n", next->b.id, next->b.ts, time_next, (int)next->b.address );
 			// show, take next pending frame from queue
 			list_del(&next->node);
-			
-			// and show it
-			ret = set_dss_ovl_addr(&next->b);
-			if (ret)
-				printk("dsscomp_isr: set_dss_ovl_addr failed: %d\n", ret);
-			
-			if (current_frame != NULL) {
-				list_add_tail(&current_frame->node, &done_queue);
-			}
+#if !defined(CONFIG_TILER_OMAP) && defined(CONFIG_VIDEO_CMA)
+			not_ready = cma_is_buffer_ready(next->b.ba, false);
+#endif
+			if (not_ready == -ETIME) {
+				//should be displayed but not ready so too late...
+				//Drop the frame
+				if(debug_isr)
+					dev_info(DEV(cdev), "DROP[%2d]  %8lu < %8lu because resizer too late\n", next->b.id, (unsigned long)next->b.ts, time_now );
+				list_add_tail(&next->node, &done_queue);
+			} else {
+				// and show it
+				ret = set_dss_ovl_addr(&next->b);
+				if (ret)
+					printk("dsscomp_isr: set_dss_ovl_addr failed: %d\n", ret);
 
-			/* advance the frame mini queue */
-			current_frame = next_frame;
-			next_frame    = next;
-			
+				if (current_frame != NULL) {
+					list_add_tail(&current_frame->node, &done_queue);
+				}
+
+				/* advance the frame mini queue */
+				current_frame = next_frame;
+				next_frame    = next;
+			}
 			break;
 		} else {
 			if(debug_isr) 
@@ -123,7 +153,11 @@ out:
 
 static u32 get_isr_mask(struct dsscomp_dev *cdev)
 {
-	return cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : cdev->displays[cdev->vsync_src]->channel == OMAP_DSS_CHANNEL_LCD ? DISPC_IRQ_VSYNC : DISPC_IRQ_VSYNC2;
+	if (cpu_is_omap34xx())
+		return DISPC_IRQ_PROG_LINE_NUM;
+	else
+		return cdev->vsync_src ? DISPC_IRQ_EVSYNC_EVEN : cdev->displays[cdev->vsync_src]->channel == OMAP_DSS_CHANNEL_LCD ? DISPC_IRQ_VSYNC : DISPC_IRQ_VSYNC2;
+
 }
 
 long isr_start( struct dsscomp_dev *cdev, void __user *ptr )
@@ -133,6 +167,10 @@ long isr_start( struct dsscomp_dev *cdev, void __user *ptr )
 	struct dsscomp_isr_cfg isr_cfg;
 	int r, i;
 
+	dispc_base = ioremap(DISPC_BASE, SZ_1K);
+	if (!dispc_base) {
+		return -ENOMEM;
+	}
 	if( (r=copy_from_user(&isr_cfg, ptr, sizeof(isr_cfg))) ) {
 		return r;
 	}
@@ -159,6 +197,12 @@ long isr_start( struct dsscomp_dev *cdev, void __user *ptr )
 	
 	cdev->rate  = t->pixel_clock;
 	cdev->scale = (t->x_res + t->hsw + t->hfp + t->hbp) * (t->y_res + t->vsw + t->vfp + t->vbp);
+
+	if (cpu_is_omap34xx()) {
+		enable_clocks(1);
+		dispc_write_reg(DISPC_LINE_NUMBER, t->y_res * 3/4);
+		enable_clocks(0);
+	}
 
 	ovl_isr_start(cdev);
 
@@ -187,6 +231,8 @@ long isr_stop( struct dsscomp_dev *cdev )
 
 	ovl_isr_stop(cdev);
 	cdev->isr.num_ovls = 0;
+
+	iounmap(dispc_base);
 
 	return ret;
 }
@@ -251,7 +297,7 @@ long isr_put( struct dsscomp_dev *cdev, void __user *ptr )
 	}
 
 #if defined(CONFIG_VIDEO_CMA)
-	cma_set_buf_state(buf->b.ba, CMABUF_BUSY, cdev->isr.ovl_ix[0]);
+	cma_set_buf_state(buf->b.ba, CMABUF_READY, cdev->isr.ovl_ix[0]);
 #endif
 
 	spin_lock_irqsave( &frame_queue_lock, flags );

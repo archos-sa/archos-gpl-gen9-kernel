@@ -43,7 +43,7 @@ static struct fixed_voltage_config fixed_reg_tsp_vcc = {
 };
 static struct platform_device fixed_supply_tsp_vcc = {
 	.name 	= "reg-fixed-voltage",
-	.id = 6,
+	.id = 7,
 	.dev.platform_data = &fixed_reg_tsp_vcc,
 };
 

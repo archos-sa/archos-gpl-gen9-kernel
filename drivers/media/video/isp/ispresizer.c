@@ -619,6 +619,26 @@ static inline void ispresizer_set_intype(struct isp_res_device *isp_res,
 }
 
 /**
+ * ispresizer_set_oneshot - One shot/Continous mode select
+ * @isp_res: Device context.
+ * @type: Pixel format type.
+ */
+static inline void ispresizer_set_oneshot(struct isp_res_device *isp_res,
+					 enum resizer_input type)
+{
+	struct device *dev = to_device(isp_res);
+
+	if (type != RSZ_OTFLY_YUV)
+		isp_reg_or(dev, OMAP3_ISP_IOMEM_RESZ, ISPRSZ_PCR,
+			   ISPRSZ_PCR_ONESHOT);
+	else
+		isp_reg_and(dev, OMAP3_ISP_IOMEM_RESZ, ISPRSZ_PCR,
+			    ~ISPRSZ_PCR_ONESHOT);
+
+	dev_dbg(dev, "%s: One shot: %u\n", __func__, type);
+}
+
+/**
  * ispresizer_set_in_offset - Configures the read address line offset.
  * @offset: Line Offset for the input image.
  *
@@ -918,6 +938,7 @@ int ispresizer_s_pipeline(struct isp_res_device *isp_res,
 
 	ispresizer_set_source(isp_res, pipe->in.path);
 	ispresizer_set_intype(isp_res, pipe->in.path);
+	//ispresizer_set_oneshot(isp_res, pipe->in.path);
 	ispresizer_set_start_phase(dev, NULL);
 	ispresizer_set_luma_enhance(dev, NULL);
 

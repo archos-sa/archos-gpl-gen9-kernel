@@ -6,7 +6,6 @@
  */
 
 //#define DEBUG
-//#define TRUST_BUGGY_TSP
 
 #include <linux/delay.h>
 #include <linux/earlysuspend.h>
@@ -23,9 +22,46 @@
 #include <linux/input/tr16c0-i2c.h>
 
 #define DELAY_MS	1
-#define POLL_MS		8
+#define POLL_MS		4
+#define POLL_MS_V2	4
+#define MAX_FINGERS	10
 
-#define CALIBRATION_DELAY_MS	5000
+#define CALIBRATION_SHORT_DELAY_MS	200
+#define CALIBRATION_LONG_DELAY_MS	60000
+
+#define MIN(a,b) 	(((a) < (b)) ? (a) : (b))
+
+static const struct reg_maps {
+	u8 touch_base;
+	u8 version;
+	u8 specop;
+	u8 int_mode;
+	u8 x_raw;
+	u8 y_raw;
+	u8 internal_enable;
+	u8 cmd_mode;
+} map[] = {
+	{
+		.touch_base = 0,
+		.version = 48,
+		.int_mode = 46,
+		.specop = 55,
+		.x_raw = 61,
+		.y_raw = 125,
+		.internal_enable = 194,
+		.cmd_mode = 0, // XXX ?
+	},
+	{
+		.touch_base = 0,
+		.version = 65,
+		.int_mode = 62,
+		.specop = 55,
+		.x_raw = 61,
+		.y_raw = 125,
+		.internal_enable = 0, // XXX
+		.cmd_mode = 56,
+	}
+};
 
 struct tr16c0_priv {
 	struct i2c_client *client;
@@ -37,10 +73,20 @@ struct tr16c0_priv {
 
 	int irq;
 
+	int x_max;
+	int y_max;
+	int flags;
+
 	unsigned long poll_ms;
+	unsigned long raw_mode;
+	void (*reset)(int);
+	int (*get_irq_level)(void);
 
 	int finger_cnt;
+	int point_state;
+
 	int state;
+	int map_version;
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 	struct early_suspend early_suspend;
@@ -70,8 +116,16 @@ static void tr16c0_power(struct i2c_client *client, int on_off)
 
 	state = on_off;
 
+	if (priv->reset)
+		priv->reset(1);
+
 	if (on_off) {
 		regulator_enable(priv->regulator);
+
+		if (priv->reset) {
+			msleep(10);
+			priv->reset(0);
+		}
 	} else {
 		regulator_disable(priv->regulator);
 	}
@@ -83,7 +137,7 @@ static int tr16c0_write(struct i2c_client * client, u8 addr, u8 *value, u8 len)
 	struct i2c_msg msg;
 	int ret;
 
-	char *buff = kzalloc(sizeof(addr) + len, GFP_KERNEL); 
+	char *buff = kzalloc(sizeof(addr) + len, GFP_KERNEL);
 
 	if (!buff)
 		return -ENOMEM;
@@ -141,6 +195,8 @@ static irqreturn_t tr16c0_irq_handler(int irq, void * p)
 {
 	struct tr16c0_priv *priv = p;
 
+	dev_dbg(&priv->client->dev, "%s\n", __func__);
+
 	switch (priv->state) {
 		case ST_RUNNING:
 			schedule_delayed_work(&priv->work,
@@ -159,51 +215,64 @@ static irqreturn_t tr16c0_irq_handler(int irq, void * p)
 static void tr16c0_irq_worker(struct work_struct *work)
 {
 	struct finger {
-		u8 id;
 		u16 x;
 		u16 y;
+		u8 id;
 	} __attribute__ ((packed));
 
 	struct tr16c0_priv *priv =
 		container_of(to_delayed_work(work), struct tr16c0_priv, work);
 
-	u8 data[4 * sizeof(struct finger) + 1];
+	u8 data[MAX_FINGERS * sizeof(struct finger) + 2];
+	int new_point_state = 0;
 	int read_len, i;
 
-	read_len = 1 + priv->finger_cnt * sizeof(struct finger);
+	read_len = 2 + priv->finger_cnt * sizeof(struct finger);
 
-	if (tr16c0_read(priv->client, 0, data, read_len) != read_len) {
+	if (tr16c0_read(priv->client, map[priv->map_version].touch_base, data, read_len) != read_len) {
 		dev_err(&priv->client->dev,
 				"%s: could not read output data.\n",
 				__FUNCTION__);
 		goto exit_work;
 	}
 
-	for (i = 0; i < priv->finger_cnt; i++) {
-		struct finger * f = (struct finger *) (data + i * sizeof(*f) + 1);
-
+	for (i = 0; i < MIN(priv->finger_cnt, data[0]); i++) {
+		struct finger * f = (struct finger *) (data + i * sizeof(*f) + 2);
 		dev_dbg(&priv->client->dev, "f%i of %d, id%d @ %d/%d\n", i, data[0], f->id, f->x, f->y);
 
-#ifdef TRUST_BUGGY_TSP
-		input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, f->id);
-#endif
+		if (priv->flags & TR16C0_FLAGS_INV_X)
+			f->x = priv->x_max - f->x;
 
-		if (i >= data[0]) {
-			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0);
-		} else {
-			input_report_abs(priv->input_dev, ABS_MT_POSITION_X, f->x);
-			input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, f->y);
-			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 1);
-		}
+		if (priv->flags & TR16C0_FLAGS_INV_Y)
+			f->y = priv->y_max - f->y;
 
+		input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, f->id-1);
+		input_report_abs(priv->input_dev, ABS_MT_POSITION_X, f->x);
+		input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, f->y);
+		input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 1);
 		input_mt_sync(priv->input_dev);
+
+		new_point_state |= (1 << f->id);
 	}
+
+	for (i=0; i < MAX_FINGERS; i++) {
+		if ((priv->point_state & (1 << i)) && !(new_point_state & (1 << i))) {
+			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, i-1);
+			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0);
+			input_mt_sync(priv->input_dev);
+		}
+	}
+
+	priv->point_state = new_point_state;
 
 	input_sync(priv->input_dev);
 
-	if ((priv->finger_cnt = data[0]) != 0)
+	if (!priv->get_irq_level())
 		schedule_delayed_work(&priv->work,
 				msecs_to_jiffies(priv->poll_ms));
+
+	priv->finger_cnt = data[0];
+
 exit_work:
 	return;
 }
@@ -213,7 +282,6 @@ static int tr16c0_startup_sequence(struct i2c_client *client)
 	struct tr16c0_priv *priv = i2c_get_clientdata(client);
 	int retry = 5;
 	int ret;
-
 
 	struct version {
 		u8 major;
@@ -225,25 +293,27 @@ static int tr16c0_startup_sequence(struct i2c_client *client)
 
 	msleep(100);
 
-	while ((ret = tr16c0_read(client, 48, (unsigned char *)&v, sizeof(v))) != sizeof(v)) {
+	while ((ret = tr16c0_read(client, map[priv->map_version].version, (unsigned char *)&v, sizeof(v))) != sizeof(v)) {
 		if (!--retry)
 			break;
 		dev_info(&client->dev, "ping ? (%d)\n", retry);
 		msleep(50);
 	}
 
-	if (ret < 0) {
-		dev_info(&client->dev, "could not talk to tsp.)\n");
+	if (ret < 0)
 		goto fail;
-	}
 
 	dev_info(&client->dev, "v%d.%d.%d (r%d)\n",
 			v.major & 0x0f, v.minor & 0xf, v.minor >> 4, v.svn);
+
+	if (tr16c0_write_u8(client, map[priv->map_version].int_mode, 0x0a) < 1)
+		goto fail;
 
 	priv->state = ST_IDLING;
 
 	return 0;
 fail:
+    dev_info(&client->dev, "could not talk to tsp.)\n");
 	tr16c0_power(client, 0);
 	return -ENODEV;
 }
@@ -253,6 +323,8 @@ static ssize_t _store_calibration(struct device *dev, struct device_attribute *a
 {
 	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
 	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+	int timeout = CALIBRATION_LONG_DELAY_MS / 1000;
+
 	int ret;
 
 	if (priv->state != ST_RUNNING)
@@ -262,22 +334,51 @@ static ssize_t _store_calibration(struct device *dev, struct device_attribute *a
 
 	INIT_COMPLETION(priv->irq_trigged);
 
-	ret = tr16c0_write_u8(client, 55, 0x03);
+	if (priv->map_version > 0)
+		tr16c0_write_u8(client, map[priv->map_version].cmd_mode, 0x00);
+
+	ret = tr16c0_write_u8(client, map[priv->map_version].specop, 0x03);
+
+	if (ret < 0) {
+		count = -ENODEV;
+		goto fail;
+	}
 
 	if (wait_for_completion_interruptible_timeout(
 				&priv->irq_trigged,
-				msecs_to_jiffies(CALIBRATION_DELAY_MS)) <= 0) {
+				msecs_to_jiffies(CALIBRATION_SHORT_DELAY_MS)) <= 0) {
+
 		dev_err(&client->dev,
-				"%s : missed irq pulse ?\n",
+				"%s : missed irq falling edge, continue\n",
 				__FUNCTION__);
-		return -ENODEV;
 	}
+
+	while (priv->get_irq_level() == 0 && (--timeout > 0)) {
+		dev_info(&client->dev, "%s : running (%d)...",
+				__func__, timeout);
+		msleep(1000);
+	}
+
+	if (timeout <= 0) {
+		dev_err(&client->dev,
+				"%s : calibration stuck\n",
+				__FUNCTION__);
+		count = -ENODEV;
+	}
+
+
+
+fail:
+	if (priv->map_version > 0)
+		tr16c0_write_u8(client, map[priv->map_version].cmd_mode, 0x00);
 
 	priv->state = ST_RUNNING;
 
 	return count;
 }
 static DEVICE_ATTR(calibration_trigger, S_IWUSR | S_IRUGO, NULL, _store_calibration);
+
+#ifdef DEBUG
 
 static ssize_t _show_poll_ms(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -298,9 +399,102 @@ static ssize_t _store_poll_ms(struct device *dev, struct device_attribute *attr,
 }
 static DEVICE_ATTR(poll_ms, S_IWUSR | S_IRUGO, _show_poll_ms, _store_poll_ms);
 
+static ssize_t _show_data(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
+	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+	int read_len = 64;
+	char data[read_len];
+
+	if (tr16c0_read(priv->client, map[priv->map_version].touch_base, data, read_len) != read_len) {
+		return -ENODEV;
+	}
+	print_hex_dump_bytes(KERN_ERR, 0, data, sizeof(data));
+	return 0;
+}
+static DEVICE_ATTR(data, S_IWUSR | S_IRUGO, _show_data, NULL);
+
+struct raw {
+	unsigned char data[48];
+};
+
+static int tr16c0_get_raw(struct i2c_client *client, u8 offset, struct raw * r)
+{
+	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+
+	if (tr16c0_read(priv->client, offset, r->data, sizeof(r->data)) != sizeof(r->data))
+		return -ENODEV;
+
+	return 0;
+}
+
+static ssize_t _show_raw_x_data(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
+	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+	struct raw x;
+	int i, p = 0;
+
+	if (tr16c0_get_raw(client, map[priv->map_version].x_raw, &x) < 0)
+		return -ENODEV;
+
+	for (i=sizeof(x.data) - 2; i>0; i-=2)
+		p += sprintf(buf+p, "%+04d ", (signed char)x.data[i]);
+
+	return p + sprintf(buf+p, "\n");
+}
+
+static DEVICE_ATTR(raw_x, S_IWUSR | S_IRUGO, _show_raw_x_data, NULL);
+
+static ssize_t _show_raw_y_data(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
+	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+	struct raw y;
+	int i, p = 0;
+
+	if (tr16c0_get_raw(client, map[priv->map_version].y_raw, &y) < 0)
+		return -ENODEV;
+
+	for (i=sizeof(y.data) - 2; i>0; i-=2)
+		p += sprintf(buf+p, "%+04d ", (signed char)y.data[i]);
+
+	return p + sprintf(buf+p, "\n");
+}
+
+static DEVICE_ATTR(raw_y, S_IWUSR | S_IRUGO, _show_raw_y_data, NULL);
+
+static ssize_t _store_raw_mode(struct device *dev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct i2c_client * client = container_of(dev, struct i2c_client, dev);
+	struct tr16c0_priv *priv = i2c_get_clientdata(client);
+
+	if (!map[priv->map_version].internal_enable) {
+		dev_err(&client->dev, "missing info.\n");
+		return -ENODEV;
+	}
+
+	strict_strtoul(buf, 10, &priv->raw_mode);
+
+	tr16c0_write_u8(client, map[priv->map_version].internal_enable, priv->raw_mode);
+
+	return count;
+}
+static DEVICE_ATTR(raw_mode, S_IWUSR | S_IRUGO, NULL, _store_raw_mode);
+
+
+#endif // DEBUG
+
 static struct attribute *sysfs_attrs[] = {
 	&dev_attr_calibration_trigger.attr,
+#ifdef DEBUG
 	&dev_attr_poll_ms.attr,
+	&dev_attr_data.attr,
+	&dev_attr_raw_x.attr,
+	&dev_attr_raw_y.attr,
+	&dev_attr_raw_mode.attr,
+#endif
 	NULL
 };
 
@@ -312,12 +506,9 @@ static int tr16c0_probe(struct i2c_client *client, const struct i2c_device_id *i
 {
 	struct tr16c0_platform_data *pdata = client->dev.platform_data;
 	struct tr16c0_priv *priv;
-	int retry = 5;
+	int retry = 2;
 
 	int ret = 0;
-
-	int x_max=800;
-	int y_max=600;
 
 	priv = kzalloc(sizeof(*priv), GFP_KERNEL);
 	if (priv == NULL)
@@ -326,9 +517,19 @@ static int tr16c0_probe(struct i2c_client *client, const struct i2c_device_id *i
 	i2c_set_clientdata(client, priv);
 
 	priv->client = client;
+	client->addr = TR16C0_ADDR;
 
 	if (pdata) {
 		priv->irq = pdata->irq;
+		priv->x_max = pdata->x_max;
+		priv->y_max = pdata->y_max;
+		priv->flags = pdata->flags;
+
+		priv->reset = pdata->reset;
+		priv->get_irq_level= pdata->get_irq_level;
+	} else {
+		ret = -ENODEV;
+		goto err_no_pdata;
 	}
 
 	priv->poll_ms = POLL_MS;
@@ -353,14 +554,30 @@ static int tr16c0_probe(struct i2c_client *client, const struct i2c_device_id *i
 	do {
 		ret = tr16c0_startup_sequence(client);
 
-		if (ret >= 0) {
-			dev_dbg(&client->dev, "%s: tsp online.\n", __FUNCTION__);
+		if (ret >= 0)
 			break;
-		}
 
 		msleep(100);
 		tr16c0_power(client, 0);
 	} while (retry--);
+
+	if (ret < 0) {
+		retry = 10;
+		client->addr = 0x55;
+		priv->poll_ms = POLL_MS_V2;
+		priv->map_version = 1;
+
+		dev_info(&client->dev, "trying v2 fw");
+		do {
+			ret = tr16c0_startup_sequence(client);
+
+			if (ret >= 0)
+				break;
+
+			msleep(100);
+			tr16c0_power(client, 0);
+		} while (retry--);
+	}
 
 	if (ret < 0) {
 		ret = -ENODEV;
@@ -368,20 +585,21 @@ static int tr16c0_probe(struct i2c_client *client, const struct i2c_device_id *i
 		goto err_detect_failed;
 	}
 
+	dev_dbg(&client->dev, "%s: tsp online @ 0x%02x, map v%d\n",
+			__func__, client->addr, priv->map_version);
+
 	priv->input_dev->name = id->name;
 
 	set_bit(EV_SYN, priv->input_dev->evbit);
 	set_bit(EV_ABS, priv->input_dev->evbit);
 
-#ifdef TRUST_BUGGY_TSP
 	set_bit(ABS_MT_TRACKING_ID, priv->input_dev->absbit);
-#endif
 	set_bit(ABS_MT_POSITION_X, priv->input_dev->absbit);
 	set_bit(ABS_MT_POSITION_Y, priv->input_dev->absbit);
 	set_bit(ABS_MT_TOUCH_MAJOR, priv->input_dev->absbit);
 
-	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, 0, x_max, 0, 0);
-	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, 0, y_max, 0, 0);
+	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, 0, priv->x_max, 0, 0);
+	input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, 0, priv->y_max, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0, 1, 0, 0);
 
 	ret = input_register_device(priv->input_dev);
@@ -429,6 +647,8 @@ err_regulator_get:
 	input_free_device(priv->input_dev);
 
 err_input_alloc_failed:
+
+err_no_pdata:
 	kfree(priv);
 
 	return ret;

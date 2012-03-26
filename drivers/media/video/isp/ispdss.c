@@ -55,8 +55,6 @@ static struct {
 	u32 in_buf_virt_addr[32];
 	u32 out_buf_virt_addr[32];
 	u32 num_video_buffers;
-	dma_addr_t tmp_buf;
-	size_t tmp_buf_size;
 	int status;
 	enum config_done config_state;
 	struct device *isp;
@@ -76,31 +74,6 @@ static void ispdss_isr(unsigned long status, isp_vbq_callback_ptr arg1,
 		return;
 
 	complete(&(dev_ctx.compl_isr));
-}
-
-static void ispdss_tmp_buf_free(void)
-{
-	struct isp_device *isp_res = dev_get_drvdata(dev_ctx.isp);
-	if (dev_ctx.tmp_buf) {
-		iommu_vfree(isp_res->iommu, dev_ctx.tmp_buf);
-		dev_ctx.tmp_buf = 0;
-		dev_ctx.tmp_buf_size = 0;
-	}
-}
-
-static u32 ispdss_tmp_buf_alloc(size_t size)
-{
-	struct isp_device *isp_res = dev_get_drvdata(dev_ctx.isp);
-
-	ispdss_tmp_buf_free();
-	dev_ctx.tmp_buf = iommu_vmalloc(isp_res->iommu, 0, size, IOMMU_FLAG);
-	if (IS_ERR((void *)dev_ctx.tmp_buf)) {
-		printk(KERN_ERR "ispmmu_vmap mapping failed ");
-		return -ENOMEM;
-	}
-	dev_ctx.tmp_buf_size = size;
-
-	return 0;
 }
 
 /**
@@ -151,7 +124,6 @@ void ispdss_put_resource()
 			dev_ctx.in_buf_virt_addr[i] = 0;
 		}
 	}
-	ispdss_tmp_buf_free();
 
 	/* make device available */
 	dev_ctx.opened = 0;
@@ -227,6 +199,7 @@ int ispdss_begin(struct isp_node *pipe, u32 input_buffer_index,
 		 u32 in_phy_add, u32 in_off)
 {
 	unsigned int output_size;
+
 	struct isp_device *isp = dev_get_drvdata(dev_ctx.isp);
 	struct isp_res_device *isp_res = &isp->isp_res;
 
@@ -240,10 +213,6 @@ int ispdss_begin(struct isp_node *pipe, u32 input_buffer_index,
 		dev_err(dev_ctx.isp, "State not configured \n");
 		return -EINVAL;
 	}
-
-	dev_ctx.tmp_buf_size = PAGE_ALIGN(pipe->out.image.bytesperline *
-					  pipe->out.image.height);
-	ispdss_tmp_buf_alloc(dev_ctx.tmp_buf_size);
 
 	pipe->in.path = RSZ_MEM_YUV;
 	if (ispresizer_s_pipeline(isp_res, pipe) != 0)

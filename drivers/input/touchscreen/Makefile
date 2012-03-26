@@ -54,4 +54,5 @@ obj-$(CONFIG_TOUCHSCREEN_TPS6507X)	+= tps6507x-ts.o
 obj-$(CONFIG_TOUCHSCREEN_PIXCIR_I2C_TS)	+= pixcir_i2c_tsp.o
 obj-$(CONFIG_TOUCHSCREEN_GOODIX_GT80x)	+= goodix-gt80x.o
 obj-$(CONFIG_TOUCHSCREEN_TR16C0)	+= tr16c0-i2c.o
+obj-$(CONFIG_TOUCHSCREEN_CPT_I2C_TSP)	+= cpt_i2c_tsp.o
 

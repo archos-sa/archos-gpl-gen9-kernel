@@ -197,7 +197,7 @@ static void omaplfb_clone_handler(struct work_struct *work)
 	struct omaplfb_clone_data *clone_data = display_info->clone_data;
 	dsscomp_t comp = clone_work->comp;
 	struct dss2_ovl_info dss2_ovl;
-	int err;
+	int err, i;
 	int dst_buff_idx;
 	u32 dst_paddr;
 
@@ -220,20 +220,24 @@ static void omaplfb_clone_handler(struct work_struct *work)
 	else
 		clone_data->active_buf_idx = dst_buff_idx;
 
-	/* Apply the composition */
-	err = dsscomp_get_first_ovl(comp, &dss2_ovl);
-	if (err) {
-		ERROR_PRINTK("Overlay not found in comp %p", comp);
-		dsscomp_drop(comp);
-		goto exit;
-	}
-	else {
-		dss2_ovl.ba = dst_paddr;
-		dsscomp_set_ovl(comp, &dss2_ovl);
+	/* Apply the composition to all dest */
+	for (i=0; i < clone_data->nb_dst; i++) {
+		err = err ? : dsscomp_get_ovl(comp, clone_data->dst_ovls[i], &dss2_ovl);
+		if (err) {
+			ERROR_PRINTK("Overlay %d not found in comp %p (%d)", clone_data->dst_ovls[i],
+						comp, err);
+			dsscomp_drop(comp);
+			goto exit;
+		}
+		else {
+			dss2_ovl.ba = dst_paddr;
+			err = err ? : dsscomp_set_ovl(comp, &dss2_ovl);
+		}
 	}
 
-	if (dsscomp_apply(comp))
-		ERROR_PRINTK("DSSComp apply failed %p", comp);
+	err = err ? : dsscomp_apply(comp);
+	if (err)
+		dsscomp_drop(comp);
 
 exit:
 	kfree(clone_work);
@@ -312,15 +316,17 @@ clone_unlock:
 	r = dsscomp_get_first_ovl(comp, &dss2_ovl);
 	if (r) {
 		ERROR_PRINTK("Overlay not found in comp %p (%d)", comp, r);
-		dsscomp_drop(clone_comp);
+		dsscomp_drop(comp);
 		return;
 	} else {
 		dss2_ovl.ba = phy_addr;
-		dsscomp_set_ovl(comp, &dss2_ovl);
+		r = dsscomp_set_ovl(comp, &dss2_ovl);
 	}
 
-	if (dsscomp_apply(comp))
-		ERROR_PRINTK("DSSComp apply failed %p", comp);
+	r = r ? : dsscomp_apply(comp);
+
+	if (r)
+		dsscomp_drop(comp);
 	/* We need to wait here until the transfer to the buffer used for
 	 * cloning ends
 	 */
@@ -368,6 +374,11 @@ static void OMAPLFBFlipDSS(OMAPLFB_SWAPCHAIN *psSwapChain,
 
 	fb_offset = aPhyAddr - psDevInfo->sSystemBuffer.sSysAddr.uiAddr;
 
+	/* save offset within buffer, so it always points to latest frame.
+	 * This allows omapfb code to properly handle current buffer
+	 */
+	framebuffer->var.yoffset = fb_offset / framebuffer->fix.line_length;
+
 	for(i = 0; i < ofbi->num_overlays ; i++)
 	{
 		struct omap_dss_device *display = NULL;
@@ -391,6 +402,7 @@ static void OMAPLFBFlipDSS(OMAPLFB_SWAPCHAIN *psSwapChain,
 				display->state == OMAP_DSS_DISPLAY_SUSPENDED)
 				continue;
 			driver = display->driver;
+			manager->info_dirty = true;
 			manager->apply(manager);
 		}
 
@@ -449,13 +461,13 @@ static void OMAPLFBPresentSyncLegacy(OMAPLFB_DEVINFO *psDevInfo,
 		/* Wait first for the DSI bus to be released then update */
 		err = driver->sync(display);
 		OMAPLFBFlipDSS(psDevInfo->psSwapChain, aPhyAddr);
-	} else if (manager && manager->wait_for_vsync) {
+	} else if (manager && manager->wait_for_go) {
 		/*
 		 * Update the video pipelines registers then wait until the
-		 * frame is shown with a VSYNC
+		 * frame is shown in the display
 		 */
 		OMAPLFBFlipDSS(psDevInfo->psSwapChain, aPhyAddr);
-		err = manager->wait_for_vsync(manager);
+		err = manager->wait_for_go(manager);
 	}
 
 	if (err)
@@ -537,7 +549,8 @@ static int omaplfb_free_buf_cloning(OMAPLFB_DEVINFO *display_info)
 	return res;
 }
 
-int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num)
+int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num,
+		int dst_ovls[MAX_OVLS], int nb_dst)
 {
 	int err = 0;
 	OMAPLFB_DEVINFO *display_info = omaplfb_get_devinfo(mgr_id_src);
@@ -576,6 +589,8 @@ int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num)
 	clone_data->mgr_id_dst = mgr_id_dst;
 	clone_data->buff_num = buff_num;
 	clone_data->active_buf_idx = 0;
+	memcpy (clone_data->dst_ovls, dst_ovls, sizeof (dst_ovls));;
+	clone_data->nb_dst = nb_dst;
 	init_waitqueue_head(&clone_data->transfer_waitq);
 	init_waitqueue_head(&clone_data->dma_waitq);
 
@@ -663,7 +678,8 @@ void omaplfb_disable_cloning_alldisp(void)
 	}
 }
 #else
-int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num)
+int omaplfb_enable_cloning(int mgr_id_src, int mgr_id_dst, int buff_num,
+		int dst_ovls[MAX_OVLS], int nb_dst)
 {
        return 0;
 }
@@ -746,6 +762,26 @@ cleanup:
 	kfree(comp);
 end:
 	return r;
+}
+
+void omaplfb_flush_comp (int display) {
+	struct list_head *list;
+	struct composition *c;
+
+	mutex_lock (&gcomposition_lock);
+
+	if (!&gcompositions[display])
+		goto unlock;
+
+	while (!list_empty (&gcompositions[display])) {
+		list = gcompositions[display].next;
+		list_del (list);
+		c = list_entry (list, struct composition, queue);
+		kfree (c);
+	}
+
+unlock:
+	mutex_unlock (&gcomposition_lock);
 }
 
 /*

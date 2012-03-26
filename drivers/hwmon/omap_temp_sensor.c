@@ -57,10 +57,10 @@
 
 #define TSHUT_THRESHOLD_TSHUT_HOT	122000	/* 122 deg C */
 #define TSHUT_THRESHOLD_TSHUT_COLD	100000	/* 100 deg C */
-#define BGAP_THRESHOLD_T_HOT		73000	/* 73 deg C */
-#define BGAP_THRESHOLD_T_COLD		71000	/* 71 deg C */
+#define BGAP_THRESHOLD_T_HOT		100000	/* 100 deg C */
+#define BGAP_THRESHOLD_T_COLD		-10000	/* -10 deg C */
 #define OMAP_ADC_START_VALUE	530
-#define OMAP_ADC_END_VALUE	923
+#define OMAP_ADC_END_VALUE	932
 
 /* OMAP443X CONTROL_TEMP_SENSOR register */
 #define BGAP_TEMPSOFF_MASK			(1<<12)
@@ -82,6 +82,7 @@
  * @is_efuse_valid - Flag to determine if eFuse is valid or not
  * @clk_on - Manages the current clock state
  * @clk_rate - Holds current clock rate
+ * @work - work queue needed for continuous temperature measurement on OMAP4430
  */
 struct omap_temp_sensor {
 	struct platform_device *pdev;
@@ -96,7 +97,7 @@ struct omap_temp_sensor {
 	u32 clk_rate;
 	int debug;
 	int debug_temp;
-	struct delayed_work	work;
+	struct delayed_work work;
 };
 
 #ifdef CONFIG_PM
@@ -124,50 +125,47 @@ static int averaged_current_temperature = 0;
  */
 static int adc_to_temp[] = {
 	-40000, -40000, -40000, -40000, -39800, -39400, -39000, -38600, -38200,
-	-37800, -37300, -36800, -36400, -36000, -35600, -35200, -34800,
-	-34300, -33800, -33400, -33000, -32600, -32200, -31800, -31300,
-	-30800, -30400, -30000, -29600, -29200, -28700, -28200, -27800,
-	-27400, -27000, -26600, -26200, -25700, -25200, -24800, -24400,
-	-24000, -23600, -23200, -22700, -22200, -21800, -21400, -21000,
-	-20600, -20200, -19700, -19200, -18800, -18400, -18000, -17600,
-	-17200, -16700, -16200, -15800, -15400, -15000, -14600, -14200,
-	-13700, -13200, -12800, -12400, -12000, -11600, -11200, -10700,
-	-10200, -9800, -9400, -9000, -8600, -8200, -7700, -7200, -6800,
-	-6400, -6000, -5600, -5200, -4800, -4300, -3800, -3400, -3000,
-	-2600, -2200, -1800, -1300, -800, -400, 0, 400, 800, 1200, 1600,
-	2100, 2600, 3000, 3400, 3800, 4200, 4600, 5100, 5600, 6000, 6400,
-	6800, 7200, 7600, 8000, 8500, 9000, 9400, 9800, 10200, 10600, 11000,
-	11400, 11900, 12400, 12800, 13200, 13600, 14000, 14400, 14800,
-	15300, 15800, 16200, 16600, 17000, 17400, 17800, 18200, 18700,
-	19200, 19600, 20000, 20400, 20800, 21200, 21600, 22100, 22600,
-	23000, 23400, 23800, 24200, 24600, 25000, 25400, 25900, 26400,
-	26800, 27200, 27600, 28000, 28400, 28800, 29300, 29800, 30200,
-	30600, 31000, 31400, 31800, 32200, 32600, 33100, 33600, 34000,
-	34400, 34800, 35200, 35600, 36000, 36400, 36800, 37300, 37800,
-	38200, 38600, 39000, 39400, 39800, 40200, 40600, 41100, 41600,
-	42000, 42400, 42800, 43200, 43600, 44000, 44400, 44800, 45300,
-	45800, 46200, 46600, 47000, 47400, 47800, 48200, 48600, 49000,
-	49500, 50000, 50400, 50800, 51200, 51600, 52000, 52400, 52800,
-	53200, 53700, 54200, 54600, 55000, 55400, 55800, 56200, 56600,
-	57000, 57400, 57800, 58200, 58700, 59200, 59600, 60000, 60400,
-	60800, 61200, 61600, 62000, 62400, 62800, 63300, 63800, 64200,
-	64600, 65000, 65400, 65800, 66200, 66600, 67000, 67400, 67800,
-	68200, 68700, 69200, 69600, 70000, 70400, 70800, 71200, 71600,
-	72000, 72400, 72800, 73200, 73600, 74100, 74600, 75000, 75400,
-	75800, 76200, 76600, 77000, 77400, 77800, 78200, 78600, 79000,
-	79400, 79800, 80300, 80800, 81200, 81600, 82000, 82400, 82800,
-	83200, 83600, 84000, 84400, 84800, 85200, 85600, 86000, 86400,
-	86800, 87300, 87800, 88200, 88600, 89000, 89400, 89800, 90200,
-	90600, 91000, 91400, 91800, 92200, 92600, 93000, 93400, 93800,
-	94200, 94600, 95000, 95500, 96000, 96400, 96800, 97200, 97600,
-	98000, 98400, 98800, 99200, 99600, 100000, 100400, 100800, 101200,
-	101600, 102000, 102400, 102800, 103200, 103600, 104000, 104400,
-	104800, 105200, 105600, 106100, 106600, 107000, 107400, 107800,
-	108200, 108600, 109000, 109400, 109800, 110200, 110600, 111000,
-	111400, 111800, 112200, 112600, 113000, 113400, 113800, 114200,
-	114600, 115000, 115400, 115800, 116200, 116600, 117000, 117400,
-	117800, 118200, 118600, 119000, 119400, 119800, 120200, 120600,
-	121000, 121400, 121800, 122200, 122600, 123000
+	-37800, -37300, -36800, -36400, -36000, -35600, -35200, -34800, -34300,
+	-33800, -33400, -33000, -32600, -32200, -31800, -31300, -30800, -30400,
+	-30000, -29600, -29200, -28700, -28200, -27800, -27400, -27000, -26600,
+	-26200, -25700, -25200, -24800, -24400, -24000, -23600, -23200, -22700,
+	-22200, -21800, -21400, -21000, -20600, -20200, -19700, -19200, -18800,
+	-18400, -18000, -17600, -17200, -16700, -16200, -15800, -15400, -15000,
+	-14600, -14200, -13700, -13200, -12800, -12400, -12000, -11600, -11200,
+	-10700, -10200, -9800, -9400, -9000, -8600, -8200, -7700, -7200, -6800,
+	-6400, -6000, -5600, -5200, -4800, -4300, -3800, -3400, -3000, -2600,
+	-2200, -1800, -1300, -800, -400, 0, 400, 800, 1200, 1600, 2100, 2600,
+	3000, 3400, 3800, 4200, 4600, 5100, 5600, 6000, 6400, 6800, 7200, 7600,
+	8000, 8500, 9000, 9400, 9800, 10200, 10800, 11100, 11400, 11900, 12400,
+	12800, 13200, 13600, 14000, 14400, 14800, 15300, 15800, 16200, 16600,
+	17000, 17400, 17800, 18200, 18700, 19200, 19600, 20000, 20400, 20800,
+	21200, 21600, 22100, 22600, 23000, 23400, 23800, 24200, 24600, 25000,
+	25400, 25900, 26400, 26800, 27200, 27600, 28000, 28400, 28800, 29300,
+	29800, 30200, 30600, 31000, 31400, 31800, 32200, 32600, 33100, 33600,
+	34000, 34400, 34800, 35200, 35600, 36000, 36400, 36800, 37300, 37800,
+	38200, 38600, 39000, 39400, 39800, 40200, 40600, 41100, 41600, 42000,
+	42400, 42800, 43200, 43600, 44000, 44400, 44800, 45300, 45800, 46200,
+	46600, 47000, 47400, 47800, 48200, 48600, 49000, 49500, 50000, 50400,
+	50800, 51200, 51600, 52000, 52400, 52800, 53200, 53700, 54200, 54600,
+	55000, 55400, 55800, 56200, 56600, 57000, 57400, 57800, 58200, 58700,
+	59200, 59600, 60000, 60400, 60800, 61200, 61600, 62000, 62400, 62800,
+	63300, 63800, 64200, 64600, 65000, 65400, 65800, 66200, 66600, 67000,
+	67400, 67800, 68200, 68700, 69200, 69600, 70000, 70400, 70800, 71200,
+	71600, 72000, 72400, 72800, 73200, 73600, 74100, 74600, 75000, 75400,
+	75800, 76200, 76600, 77000, 77400, 77800, 78200, 78600, 79000, 79400,
+	79800, 80300, 80800, 81200, 81600, 82000, 82400, 82800, 83200, 83600,
+	84000, 84400, 84800, 85200, 85600, 86000, 86400, 86800, 87300, 87800,
+	88200, 88600, 89000, 89400, 89800, 90200, 90600, 91000, 91400, 91800,
+	92200, 92600, 93000, 93400, 93800, 94200, 94600, 95000, 95500, 96000,
+	96400, 96800, 97200, 97600, 98000, 98400, 98800, 99200, 99600, 100000,
+	100400, 100800, 101200, 101600, 102000, 102400, 102800, 103200, 103600,
+	104000, 104400, 104800, 105200, 105600, 106100, 106600, 107000, 107400,
+	107800, 108200, 108600, 109000, 109400, 109800, 110200, 110600, 111000,
+	111400, 111800, 112200, 112600, 113000, 113400, 113800, 114200, 114600,
+	115000, 115400, 115800, 116200, 116600, 117000, 117400, 117800, 118200,
+	118600, 119000, 119400, 119800, 120200, 120600, 121000, 121400, 121800,
+	122200, 122600, 123000, 123400, 123800, 124200, 124600, 124900, 125000,
+	125000, 125000, 125000
 };
 
 /*
@@ -337,6 +335,61 @@ static void omap443x_enable_continuous_mode(struct omap_temp_sensor *temp_sensor
 	omap_temp_sensor_writel(temp_sensor, val, TEMP_SENSOR_CTRL_OFFSET);
 }
 
+static int omap_temp_sensor_read_single(struct omap_temp_sensor
+						*temp_sensor)
+{
+	u32 val;
+	int max_loop = 100;
+	int i;
+	int temp = 0;
+
+	/* select single mode conversion */
+	val = omap_temp_sensor_readl(temp_sensor, BGAP_CTRL_OFFSET);
+	val &= ~(OMAP4_SINGLE_MODE_MASK);
+	omap_temp_sensor_writel(temp_sensor, val, BGAP_CTRL_OFFSET);
+
+	/* wait for EOCZ == '0' */
+	i = 0;
+	do {
+		val = omap_temp_sensor_readl(temp_sensor,
+			TEMP_SENSOR_CTRL_OFFSET);
+		val &= OMAP4_BGAP_TEMP_SENSOR_EOCZ_MASK;
+		i++;
+	} while ((val != 0) && (i <= max_loop));
+
+	/* Set SOC = '1' */
+	val |= OMAP4_BGAP_TEMP_SENSOR_SOC_MASK;
+	omap_temp_sensor_writel(temp_sensor, val, TEMP_SENSOR_CTRL_OFFSET);
+
+	/* wait for EOCZ == '1' */
+	i = 0;
+	do {
+		val = omap_temp_sensor_readl(temp_sensor,
+			TEMP_SENSOR_CTRL_OFFSET);
+		val &= OMAP4_BGAP_TEMP_SENSOR_EOCZ_MASK;
+		i++;
+	} while ((val != (1 << OMAP4_BGAP_TEMP_SENSOR_EOCZ_SHIFT)) &&
+		(i <= max_loop));
+
+	/* Set SOC = '0' */
+	val &= ~(OMAP4_BGAP_TEMP_SENSOR_SOC_MASK);
+	omap_temp_sensor_writel(temp_sensor, val, TEMP_SENSOR_CTRL_OFFSET);
+
+	/* wait for EOCZ == '0' */
+	i = 0;
+	do {
+		val = omap_temp_sensor_readl(temp_sensor,
+			TEMP_SENSOR_CTRL_OFFSET);
+		val &= OMAP4_BGAP_TEMP_SENSOR_EOCZ_MASK;
+		i++;
+	} while ((val != 0) && (i <= max_loop));
+
+	/* Read DTEMP value */
+	temp = omap_temp_sensor_readl(temp_sensor, TEMP_SENSOR_CTRL_OFFSET);
+	temp = temp & (OMAP4_BGAP_TEMP_SENSOR_DTEMP_MASK);
+
+	return temp;
+}
 
 /*
  * sysfs hook functions
@@ -625,6 +678,20 @@ static int omap_temp_sensor_read_temp(struct device *dev,
 		temp = omap_temp_sensor_readl(temp_sensor, TEMP_SENSOR_CTRL_OFFSET);
 		temp = temp & (OMAP4_BGAP_TEMP_SENSOR_DTEMP_MASK);
 
+		/* If DTEMP is not yet valid, then use the single mode to force
+		immediate temperature measurement */
+		if (temp == 0) {
+			/* Save BGAP_CTRL register */
+			u32 reg_val = omap_temp_sensor_readl(temp_sensor,
+				BGAP_CTRL_OFFSET);
+
+			temp = omap_temp_sensor_read_single(temp_sensor);
+
+			/* Restore BGAP_CTRL register */
+			omap_temp_sensor_writel(temp_sensor, reg_val,
+				BGAP_CTRL_OFFSET);
+		}
+
 		/* look up for temperature in the table and return the
 		   temperature */
 		if (temp < OMAP_ADC_START_VALUE || temp > OMAP_ADC_END_VALUE) {
@@ -648,7 +715,7 @@ static int omap_temp_sensor_read_temp(struct device *dev,
 
 		/* look up for temperature in the table and return the
 		   temperature */
-		if (temp > 127) {
+		if (temp > 126) {
 			pr_err("invalid adc code reported by the sensor %d", temp);
 			ret = -EINVAL;
 			goto out;
@@ -933,8 +1000,7 @@ static int omap_temp_sensor_enable(struct omap_temp_sensor *temp_sensor, bool en
 			clk_set_rate(temp_sensor->clock, 1000000);
 			clk_rate = clk_get_rate(temp_sensor->clock);
 			temp_sensor->clk_rate = clk_rate;
-		} else if(cpu_is_omap443x())
-			clk_enable(temp_sensor->clock);
+		}
 
 		temp = omap_temp_sensor_readl(temp_sensor,
 						TEMP_SENSOR_CTRL_OFFSET);
@@ -1055,7 +1121,7 @@ static void temp_measure_work(struct work_struct *work)
 
 	/* look up for temperature in the table and return the
 		temperature */
-	if (temp > 127) {
+	if (temp > 126) {
 		pr_err("invalid adc code reported by the sensor %d", temp);
 	} else {
 		temp = omap443x_adc_to_temp_conversion(temp);
@@ -1173,18 +1239,16 @@ static int __devinit omap_temp_sensor_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "Request threaded irq failed.\n");
 			goto req_irq_err;
 		}
-	}
 
-	ret = request_threaded_irq(temp_sensor->tshut_irq, NULL,
-			omap_tshut_irq_handler, IRQF_TRIGGER_RISING | IRQF_ONESHOT,
-			"tshut", (void *)temp_sensor);
-	if (ret) {
-		gpio_free(OMAP_TSHUT_GPIO);
-		dev_err(&pdev->dev, "Request threaded irq failed for TSHUT.\n");
-		goto req_thsut_irq_err;
-	}
+		ret = request_threaded_irq(temp_sensor->tshut_irq, NULL,
+				omap_tshut_irq_handler, IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+				"tshut", (void *)temp_sensor);
+		if (ret) {
+			gpio_free(OMAP_TSHUT_GPIO);
+			dev_err(&pdev->dev, "Request threaded irq failed for TSHUT.\n");
+			goto req_thsut_irq_err;
+		}
 
-	if(cpu_is_omap446x()) {
 		/* unmask the T_COLD and unmask T_HOT at init */
 		val = omap_temp_sensor_readl(temp_sensor, BGAP_CTRL_OFFSET);
 		val |= OMAP4_MASK_COLD_MASK;
@@ -1193,8 +1257,8 @@ static int __devinit omap_temp_sensor_probe(struct platform_device *pdev)
 	}
 
 	if(cpu_is_omap443x()) {
-			INIT_DELAYED_WORK(&temp_sensor->work, temp_measure_work);
-			schedule_delayed_work(&temp_sensor->work, HZ);
+		INIT_DELAYED_WORK(&temp_sensor->work, temp_measure_work);
+		schedule_delayed_work(&temp_sensor->work, HZ);
 	}
 	
 	dev_info(&pdev->dev, "%s : '%s'\n", dev_name(temp_sensor->dev),

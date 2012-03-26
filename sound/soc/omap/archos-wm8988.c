@@ -427,16 +427,6 @@ static int archos_tda19989_hw_params(struct snd_pcm_substream *substream,
 
 	//printk(KERN_INFO "archos_tda19989_hw_params : freq = %d, channels = %d\n", params_rate(params), params_channels(params));
 	
-	/* Set codec DAI configuration */
-	ret = snd_soc_dai_set_fmt(codec_dai,
-				  SND_SOC_DAIFMT_I2S |
-				  SND_SOC_DAIFMT_NB_NF |
-				  SND_SOC_DAIFMT_CBS_CFS);
-	if (ret < 0) {
-		printk(KERN_ERR "can't set codec DAI fmt configuration\n");
-		return ret;
-	}
-
 	/* Set cpu DAI configuration */
 	ret = snd_soc_dai_set_fmt(cpu_dai,
 				  SND_SOC_DAIFMT_I2S |
@@ -449,7 +439,7 @@ static int archos_tda19989_hw_params(struct snd_pcm_substream *substream,
 
 	/* Needed if the OMAP is Master */
 	/* Set MCBSP sysclock to functional (96 Mhz) */
-	ret = snd_soc_dai_set_sysclk(cpu_dai, OMAP_MCBSP_SYSCLK_CLKS_FCLK, 0,
+	ret = snd_soc_dai_set_sysclk(cpu_dai, OMAP_MCBSP_SYSCLK_CLKS_FCLK, 96000000,
 					    SND_SOC_CLOCK_IN);
 	if (ret < 0) {
 		pr_err(KERN_ERR "can't set cpu system clock\n");
@@ -855,7 +845,7 @@ static struct snd_soc_dai_link archos_dai[] = {
 	},{
 	.name = "HDMI",
 	.stream_name = "TDA19989",
-	.cpu_dai_name = "omap-mcbsp-dai.4",	// McBSP4
+	.cpu_dai_name = "omap-mcbsp-dai.3",	// McBSP4
 	.platform_name = "omap-pcm-audio",
 	.codec_dai_name = "tda19989-hifi",
 	.no_codec = 1,

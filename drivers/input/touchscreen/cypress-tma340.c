@@ -115,6 +115,10 @@ struct cypress_tma340_priv {
 	int point_state;
 	int upgrade_state;
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	int down;
+#endif
+
 	struct tma340_version version;
 
 	int irq;
@@ -126,7 +130,7 @@ struct cypress_tma340_priv {
 	u16 y_max;
 
 #ifdef BENCH
-	struct hrtimer timer;
+	struct hrtimer bench_timer;
 	int irq_count;
 #endif
 
@@ -325,6 +329,11 @@ static void cypress_tma340_work_func(struct work_struct *work)
 	for (i=0; i<priv->finger_max; i++) {
 		int id = i&1 ? (b[dop.p[i].id] & 0x0f) : (b[dop.p[i].id] >> 4);
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+		if (i)
+			break;
+#endif
+
 		if (i < (b[dop.tt_stat] & 7)) {
 			int x,y,p;
 
@@ -344,12 +353,23 @@ static void cypress_tma340_work_func(struct work_struct *work)
 
 			p = b[dop.p[i].pressure];
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_X, x);
+			input_report_abs(priv->input_dev, ABS_Y, y);
+			input_report_abs(priv->input_dev, ABS_PRESSURE, p);
+
+			if (priv->down) {
+				input_report_key(priv->input_dev, BTN_TOUCH, 1);
+				priv->down=0;
+			}
+#else
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, id - 1);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_X, x);
 			input_report_abs(priv->input_dev, ABS_MT_POSITION_Y, y);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, p);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, p);
 			input_mt_sync(priv->input_dev);
+#endif
 
 			nu_point_state |= (1 << id);
 		}
@@ -357,10 +377,16 @@ static void cypress_tma340_work_func(struct work_struct *work)
 
 	for (i=0; i<16; i++) {
 		if ((priv->point_state & (1 << i)) && !(nu_point_state & (1 << i))) {
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+			input_report_abs(priv->input_dev, ABS_PRESSURE, 0);
+			input_report_key(priv->input_dev, BTN_TOUCH, 0);
+			priv->down=1;
+#else
 			input_report_abs(priv->input_dev, ABS_MT_TRACKING_ID, i - 1);
 			input_report_abs(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0);
 			input_report_abs(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0);
 			input_mt_sync(priv->input_dev);
+#endif
 		}
 	}
 
@@ -381,7 +407,7 @@ exit_work:
 static enum hrtimer_restart irq_counter_func(struct hrtimer *timer)
 {
 	struct cypress_tma340_priv *priv =
-		container_of(timer, struct cypress_tma340_priv, timer);
+		container_of(timer, struct cypress_tma340_priv, bench_timer);
 
 	static int max = 0;
 
@@ -395,7 +421,7 @@ static enum hrtimer_restart irq_counter_func(struct hrtimer *timer)
 
 	priv->irq_count = 0;
 
-	hrtimer_start(&priv->timer, ktime_set( 0, MS_TO_NS(1000)), HRTIMER_MODE_REL);
+	hrtimer_start(&priv->bench_timer, ktime_set( 0, MS_TO_NS(1000)), HRTIMER_MODE_REL);
 
 	return HRTIMER_NORESTART;
 }
@@ -1063,6 +1089,10 @@ static int cypress_tma340_probe(struct i2c_client *client, const struct i2c_devi
 		priv->flags = pdata->flags;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	priv->down = 0;
+#endif
+
 	priv->wq = create_singlethread_workqueue(id->name);
 	if (priv->wq == NULL) {
 		ret = -ENOMEM;
@@ -1136,32 +1166,40 @@ static int cypress_tma340_probe(struct i2c_client *client, const struct i2c_devi
 	priv->input_dev->name = id->name;
 
 	set_bit(EV_SYN, priv->input_dev->evbit);
-
-	set_bit(EV_KEY, priv->input_dev->evbit);
-	set_bit(BTN_TOUCH, priv->input_dev->keybit);
 	set_bit(EV_ABS, priv->input_dev->evbit);
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
+	set_bit(EV_KEY, priv->input_dev->evbit);
+	set_bit(BTN_TOUCH, priv->input_dev->keybit);
+#else
 	set_bit(ABS_MT_POSITION_X, priv->input_dev->absbit);
 	set_bit(ABS_MT_POSITION_Y, priv->input_dev->absbit);
 	set_bit(ABS_MT_TRACKING_ID, priv->input_dev->absbit);
 	set_bit(ABS_MT_TOUCH_MAJOR, priv->input_dev->absbit);
 	set_bit(ABS_MT_WIDTH_MAJOR, priv->input_dev->absbit);
+#endif
 
+#ifdef CONFIG_TOUCHSCREEN_ARCHOS_TS_MONOTOUCH_COMPAT
 	if (priv->flags & CYPRESS_TMA340_FLAGS_XY_SWAP) {
 		input_set_abs_params(priv->input_dev, ABS_Y, 0, priv->x_max, 0, 0);
 		input_set_abs_params(priv->input_dev, ABS_X, 0, priv->y_max, 0, 0);
-		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, 0, priv->x_max, 0, 0);
-		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, 0, priv->y_max, 0, 0);
 	} else {
 		input_set_abs_params(priv->input_dev, ABS_X, 0, priv->x_max, 0, 0);
 		input_set_abs_params(priv->input_dev, ABS_Y, 0, priv->y_max, 0, 0);
+	}
+	input_set_abs_params(priv->input_dev, ABS_PRESSURE, 0, 0x80, 0, 0);
+#else
+	if (priv->flags & CYPRESS_TMA340_FLAGS_XY_SWAP) {
+		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, 0, priv->x_max, 0, 0);
+		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, 0, priv->y_max, 0, 0);
+	} else {
 		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_X, 0, priv->x_max, 0, 0);
 		input_set_abs_params(priv->input_dev, ABS_MT_POSITION_Y, 0, priv->y_max, 0, 0);
 	}
 
-	input_set_abs_params(priv->input_dev, ABS_PRESSURE, 0, 0xff, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_TOUCH_MAJOR, 0, 0xff, 0, 0);
 	input_set_abs_params(priv->input_dev, ABS_MT_WIDTH_MAJOR, 0, 0xff, 0, 0);
+#endif
 
 	ret = input_register_device(priv->input_dev);
 	if (ret) {
@@ -1183,9 +1221,9 @@ static int cypress_tma340_probe(struct i2c_client *client, const struct i2c_devi
 #endif
 
 #ifdef BENCH
-	hrtimer_init(&priv->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
-	priv->timer.function = irq_counter_func;
-	hrtimer_start(&priv->timer, ktime_set( 0, MS_TO_NS(1000)), HRTIMER_MODE_REL);
+	hrtimer_init(&priv->bench_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	priv->bench_timer.function = irq_counter_func;
+	hrtimer_start(&priv->bench_timer, ktime_set( 0, MS_TO_NS(1000)), HRTIMER_MODE_REL);
 	priv->irq_count = 0;
 #endif
 
@@ -1230,7 +1268,7 @@ static int cypress_tma340_remove(struct i2c_client *client)
 	sysfs_remove_group(&client->dev.kobj, &attr_group);
 
 #ifdef BENCH
-	hrtimer_cancel(&priv->timer);
+	hrtimer_cancel(&priv->bench_timer);
 #endif
 
 #ifdef CONFIG_HAS_EARLYSUSPEND

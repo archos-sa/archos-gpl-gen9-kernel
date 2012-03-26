@@ -485,6 +485,7 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 	if ((card->csd.mmca_vsn >= CSD_SPEC_VER_4) &&
 	    (host->caps & (MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA))) {
 		unsigned ext_csd_bit, bus_width;
+		int retries;
 
 		if (host->caps & MMC_CAP_8_BIT_DATA) {
 			if (ddr)
@@ -500,14 +501,27 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 			bus_width = MMC_BUS_WIDTH_4;
 		}
 
-		err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
-				 EXT_CSD_BUS_WIDTH, ext_csd_bit);
+		retries = 10;
+		while(retries--) {
+			err = mmc_switch(card, EXT_CSD_CMD_SET_NORMAL,
+					 EXT_CSD_BUS_WIDTH, ext_csd_bit);
+
+			if (!err)
+				break;
+
+			printk("+----------------------------------------------------------+\n");
+			printk("|                                                          |\n");
+			printk("|%s: mmc_switch (bus width) failed\n", __FUNCTION__);
+			printk("|                                                          |\n");
+			printk("+----------------------------------------------------------+\n");
+
+		}
 
 		if (err && err != -EBADMSG)
 			goto free_card;
 
 		if (err) {
-			printk(KERN_WARNING "%s: switch to bus width %d ddr %d "
+			printk(KERN_INFO "%s: switch to bus width %d ddr %d "
 			       "failed\n", mmc_hostname(card->host),
 			       1 << bus_width, ddr);
 			err = 0;
@@ -596,12 +610,18 @@ static int mmc_suspend(struct mmc_host *host)
 static int mmc_resume(struct mmc_host *host)
 {
 	int err;
+	int retry=10;
 
 	BUG_ON(!host);
 	BUG_ON(!host->card);
 
 	mmc_claim_host(host);
 	err = mmc_init_card(host, host->ocr, host->card);
+	while (err && (host->caps & MMC_CAP_NONREMOVABLE) && --retry) {
+		pr_warning("%s: mmc_init_card returns err %d for non-removable card %s, retry %d\n",
+				__FUNCTION__, err, host->name, retry);
+		err = mmc_init_card(host, host->ocr, host->card);
+	}
 	mmc_release_host(host);
 
 	return err;
@@ -610,10 +630,16 @@ static int mmc_resume(struct mmc_host *host)
 static int mmc_power_restore(struct mmc_host *host)
 {
 	int ret;
+	int retry=10;
 
 	host->card->state &= ~MMC_STATE_HIGHSPEED;
 	mmc_claim_host(host);
 	ret = mmc_init_card(host, host->ocr, host->card);
+	while (ret && (host->caps & MMC_CAP_NONREMOVABLE) && --retry) {
+		pr_warning("%s: mmc_init_card returns err %d for non-removable card %s, retry %d\n",
+				__FUNCTION__, ret, host->name, retry);
+		ret = mmc_init_card(host, host->ocr, host->card);
+	}
 	mmc_release_host(host);
 
 	return ret;

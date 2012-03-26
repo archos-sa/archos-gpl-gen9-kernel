@@ -216,9 +216,7 @@ static LDM_DRV powervr_driver = {
 #endif
 	.suspend	= PVRSRVDriverSuspend,
 	.resume		= PVRSRVDriverResume,
-	/** FIXME: PVRSRVDriverShutdown called on reboot and shutdown
-	 *  causes a system stuck requiring an emergency halt of the device */ 
-	/* .shutdown	= PVRSRVDriverShutdown, */
+	.shutdown	= PVRSRVDriverShutdown,
 };
 
 LDM_DEV *gpsPVRLDMDev;

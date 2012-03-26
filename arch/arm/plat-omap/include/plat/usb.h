@@ -80,6 +80,7 @@ struct uhhtll_apis {
 	int	(*resume) (enum driver_type);
 	int	(*hibernate) (enum driver_type);
 	int 	(*wakeup) (enum driver_type);
+	int 	(*wake_phy) (enum driver_type);
 };
 
 /*-------------------------------------------------------------------------*/

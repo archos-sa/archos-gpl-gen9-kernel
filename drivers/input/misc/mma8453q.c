@@ -93,7 +93,7 @@ struct mma8453q_data {
 static struct i2c_client *this_client;
 
 /* Filter coefficients */
-static int filter_coeff[FILTER_DEPTH] = {1, 1, 1, 1, 1};
+//static int filter_coeff[FILTER_DEPTH] = {1, 1, 1, 1, 1};
 
 /*
  * MMA8453Q stuff
@@ -126,6 +126,7 @@ static short mma8453q_get_mode(void)
 	return data;
 }
 
+#if 0
 static short mma8453q_get_sysmode(void)
 {
 	u8 data;
@@ -133,6 +134,7 @@ static short mma8453q_get_sysmode(void)
 	data = mma8453q_read(this_client, REG_SYSMOD) & MMA8453Q_SYSMODE_MASK;
 	return data;
 }
+#endif
 
 static int mma8453q_set_range(short range)
 {
@@ -200,6 +202,7 @@ static int mma8453q_set_int_ppod(int on)
 	return ret;
 }
 
+#if 0
 static int mma8453q_get_int_ppod(void)
 {
 	u8 data;
@@ -207,6 +210,7 @@ static int mma8453q_get_int_ppod(void)
 	data = mma8453q_read(this_client, REG_CTRL_REG3) & MMA8453Q_INT_PP_OD;
 	return ((data > 0) ? MMA8453Q_OPEN_DRAIN : data);
 }
+#endif
 
 static int mma8453q_set_int_polarity(int on)
 {
@@ -222,6 +226,7 @@ static int mma8453q_set_int_polarity(int on)
 	return ret;
 }
 
+#if 0
 static int mma8453q_get_int_polarity(void)
 {
 	u8 data;
@@ -230,7 +235,6 @@ static int mma8453q_get_int_polarity(void)
 	return ((data > 0) ? MMA8453Q_ACTIVE_HIGH : data);
 }
 
-#if 0
 static int mma8453q_set_pulse_debounce(short samples)
 {
 	int ret = 0;
@@ -512,7 +516,6 @@ static void mma8453q_report_values(void)
 {
 	struct mma8453q_accel_data values;
 	struct mma8453q_data *data = i2c_get_clientdata(this_client);
-	int i;
 
 	mma8453q_get_values(&values);
 
@@ -786,7 +789,7 @@ static void mma8453q_polling_work_func(struct work_struct *work)
 
 static void mma8453q_irq_work_func(struct work_struct *work)
 {
-	struct mma8453q_data *data = i2c_get_clientdata(this_client);
+//	struct mma8453q_data *data = i2c_get_clientdata(this_client);
 
 //	input_report_abs(data->input_dev, ABS_MISC, mma8453q_get_tilt_status());
 //	input_sync(data->input_dev);
@@ -1149,11 +1152,13 @@ static int mma8453q_probe(struct i2c_client *client,
 		goto exit_req_irq1_failed;
 	}
 
-	err = request_irq(i2c_data->pdata->irq2, mma8453q_isr, IRQF_TRIGGER_RISING,
-			    "mma8453q-int", client);
-	if(err) {
-		printk(KERN_ERR "mma8453q_probe: Irq request failed (irq %d)!!\n", i2c_data->pdata->irq2);
-		goto exit_req_irq2_failed;
+	if (i2c_data->pdata->irq2 != -1) {
+		err = request_irq(i2c_data->pdata->irq2, mma8453q_isr, IRQF_TRIGGER_RISING,
+				"mma8453q-int", client);
+		if(err) {
+			printk(KERN_ERR "mma8453q_probe: Irq request failed (irq %d)!!\n", i2c_data->pdata->irq2);
+			goto exit_req_irq2_failed;
+		}
 	}
 
 	INIT_DELAYED_WORK(&i2c_data->polling_work, mma8453q_polling_work_func);
@@ -1181,12 +1186,17 @@ static int mma8453q_probe(struct i2c_client *client,
 	}
 
 	/* Auxclk1 workaround TODO: the mma8453q should not need auxclk1 so this hack is voodoo / cargo code */
-	i2c_data->auxclk1 = clk_get(NULL, aux_name);
-	if (IS_ERR(i2c_data->auxclk1)) {
-		pr_err("%s: auxclk1 not available\n", __func__);
-		goto exit_auxclk1_failed;
+	if (cpu_is_omap44xx()) {
+		i2c_data->auxclk1 = clk_get(NULL, aux_name);
+		if (IS_ERR(i2c_data->auxclk1)) {
+			pr_err("%s: auxclk1 not available\n", __func__);
+			goto exit_auxclk1_failed;
+		}
+		clk_enable(i2c_data->auxclk1);
+	} else {
+		i2c_data->auxclk1 = NULL;
 	}
-	clk_enable(i2c_data->auxclk1);
+
 	i2c_data->suspended = 0;
 
 	i2c_data->input_dev = input_allocate_device();
@@ -1267,7 +1277,16 @@ exit_misc_device_register_failed:
 exit_input_dev_alloc_failed:
 exit_auxclk1_failed:
 exit_detection_failed:
-	free_irq(i2c_data->pdata->irq2, client);
+	if (!IS_ERR(accel_1v8)) {
+		regulator_disable(accel_1v8);
+		regulator_put(accel_1v8);
+	}
+	if (!IS_ERR(accel_vcc)) {
+		regulator_disable(accel_vcc);
+		regulator_put(accel_vcc);
+	}
+	if (i2c_data->pdata->irq2 != -1)
+		free_irq(i2c_data->pdata->irq2, client);
 exit_req_irq2_failed:
 	free_irq(i2c_data->pdata->irq1, client);
 exit_req_irq1_failed:
@@ -1298,7 +1317,10 @@ static int __exit mma8453q_remove(struct i2c_client *client)
 		regulator_disable(accel_vcc);
 		regulator_put(accel_vcc);
 	}
-	free_irq(data->pdata->irq2, client);
+
+	if (data->pdata->irq2 != -1)
+		free_irq(data->pdata->irq2, client);
+
 	free_irq(data->pdata->irq1, client);
 	kfree(data);
 	return 0;
@@ -1308,13 +1330,20 @@ static int mma8453q_suspend(struct i2c_client *client, pm_message_t mesg)
 {
 	struct mma8453q_data *data = i2c_get_clientdata(client);
 	printk("%s\n", __func__);
-	clk_disable(data->auxclk1);
+	if (data->auxclk1)
+		clk_disable(data->auxclk1);
 	data->suspended = 1;
-//	struct mma8453q_data *data = i2c_get_clientdata(client);
+
 //	if (data->opencount) {
 //		cancel_delayed_work_sync(&data->polling_work);
 //		mma8453q_set_mode(MMA8453Q_MODE_STANDBY);
 //	}
+
+	if (!IS_ERR(accel_1v8))
+		regulator_disable(accel_1v8);
+	if (!IS_ERR(accel_vcc))
+		regulator_disable(accel_vcc);
+
 	return 0;
 }
 
@@ -1322,14 +1351,22 @@ static int mma8453q_resume(struct i2c_client *client)
 {
 	struct mma8453q_data *data = i2c_get_clientdata(client);
 	printk("%s\n", __func__);
-	clk_enable(data->auxclk1);
+
+	if (!IS_ERR(accel_1v8))
+		regulator_enable(accel_1v8);
+	if (!IS_ERR(accel_vcc))
+		regulator_enable(accel_vcc);
+
+	if (data->auxclk1)
+		clk_enable(data->auxclk1);
 	data->suspended = 0;
-//	struct mma8453q_data *data = i2c_get_clientdata(client);
+
 //	if (data->opencount) {
 //		mma8453q_set_mode(MMA8453Q_MODE_ACTIVE);
 //		if (data->poll_delay > 0)
 //			schedule_delayed_work(&data->polling_work,0);
 //	}
+
 	return 0;
 }
 

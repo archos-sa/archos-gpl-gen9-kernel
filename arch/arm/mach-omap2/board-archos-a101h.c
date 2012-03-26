@@ -59,6 +59,8 @@
 #include <plat/hwspinlock.h>
 
 #include <linux/input/pixcir_i2c_tsp.h>
+#include <linux/input/tr16c0-i2c.h>
+#include <linux/input/cpt_i2c_tsp.h>
 
 #include <plat/archos-audio-twl6040.h>
 #include <mach/board-archos.h>
@@ -103,6 +105,12 @@ static void remux_regulator_gpio(int gpio)
 	case 104:
 		omap_mux_init_signal("gpmc_ncs7.gpio_104",
 				OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
+		break;
+	case GPIO_VCC_PWRON:
+	case GPIO_1V8_PWRON:
+		/* These signals control voltages that are needed after warm reset,
+		   make sure, they are pulled high */
+		omap_mux_init_gpio(gpio, OMAP_PIN_INPUT_PULLUP|OMAP_PIN_OUTPUT);
 		break;
 	}
 }
@@ -179,6 +187,9 @@ static struct regulator_init_data fixed_reg_vcc_initdata = {
 		.min_uV = 3300000,
 		.max_uV = 3300000,
 		.valid_ops_mask = REGULATOR_CHANGE_STATUS,
+		.always_on = true, /* FIXME: Makes the eMMC stable after suspend. Does not fix the real issue though
+				      (VCC does not go off but stays at ca. 1V, eMMC resets at 0.5V max.)
+				      So keep it on during suspend... */
 	},
 	.consumer_supplies = fixed_reg_vcc_consumer,
 	.num_consumer_supplies = ARRAY_SIZE(fixed_reg_vcc_consumer),
@@ -235,9 +246,9 @@ static struct platform_device fixed_supply_vbus_musb = {
 	},
 };
 
-/* MMC1 "virtual" regulators */
+/* MMC2 "virtual" regulators */
 static struct regulator_consumer_supply fixed_reg_vmmc_consumer[] = {
-	REGULATOR_SUPPLY("vmmc", "mmci-omap-hs.0"),
+	REGULATOR_SUPPLY("vmmc", "mmci-omap-hs.1"),
 };
 static struct regulator_init_data fixed_reg_vmmc_initdata = {
 	.constraints = {
@@ -250,7 +261,7 @@ static struct regulator_init_data fixed_reg_vmmc_initdata = {
 	.num_consumer_supplies = ARRAY_SIZE(fixed_reg_vmmc_consumer),
 };
 static struct fixed_voltage_config fixed_reg_vmmc = {
-	.supply_name		= "vmmc1",
+	.supply_name		= "vmmc2",
 	.microvolts		= 1800000,
 	.gpio			= -EINVAL,
 	.enabled_at_boot	= 1,
@@ -263,7 +274,7 @@ static struct platform_device fixed_supply_vmmc = {
 };
 
 static struct regulator_consumer_supply fixed_reg_vmmc_aux_consumer[] = {
-	REGULATOR_SUPPLY("vmmc_aux", "mmci-omap-hs.0"),
+	REGULATOR_SUPPLY("vmmc_aux", "mmci-omap-hs.1"),
 };
 static struct regulator_init_data fixed_reg_vmmc_aux_initdata = {
 	.constraints = {
@@ -276,7 +287,7 @@ static struct regulator_init_data fixed_reg_vmmc_aux_initdata = {
 	.num_consumer_supplies = ARRAY_SIZE(fixed_reg_vmmc_aux_consumer),
 };
 static struct fixed_voltage_config fixed_reg_vmmc_aux = {
-	.supply_name		= "vmmc1_aux",
+	.supply_name		= "vmmc2_aux",
 	.microvolts		= 3300000,
 	.gpio			= -EINVAL,
 	.enabled_at_boot	= 1,
@@ -293,32 +304,54 @@ static struct archos_usb_config usb_config __initdata = {
 	.rev[0] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
 	},
 	.rev[1] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
 	},
 	.rev[2] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
 	},
 	.rev[3] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
 	},
 	.rev[4] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
 	},
 	.rev[5] = {
 		.enable_usb_ehci = 42,
 		.enable_usb_hub = 60,
-		.enable_5v = 40,
+		.enable_5v = UNUSED_GPIO,
+	},
+};
+
+static struct archos_3g_config usb_3g_config __initdata = {
+	.nrev = 6,
+	.rev[0] = {
+		.enable = 40,
+	},
+	.rev[1] = {
+		.enable = 40,
+	},
+	.rev[2] = {
+		.enable = 40,
+	},
+	.rev[3] = {
+		.enable = 40,
+	},
+	.rev[4] = {
+		.enable = 40,
+	},
+	.rev[5] = {
+		.enable = 40,
 	},
 };
 
@@ -373,37 +406,43 @@ static struct archos_i2c_tsp_config i2c_tsp_config __initdata = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 	.rev[1] = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 	.rev[2] = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 	.rev[3] = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 	.rev[4] = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 	.rev[5] = {
 		.irq_gpio = 112,
 		.irq_signal = "abe_mcbsp2_dx.gpio_112",
 		.pwr_gpio = 110,
-		.shtdwn_gpio = UNUSED_GPIO,
+		.shtdwn_gpio = 0,
+		.shtdwn_signal = "kpd_col1.gpio_0",
 	},
 };
 
@@ -416,12 +455,12 @@ static struct archos_temp_duty_cycle_config temp_duty_cycle_config __initdata = 
 		.inhibit_charging = true,
 
 		.duty_cycle_temp_table = {
-			{ .temperature=70000, .heating_budget=6000,   .cooling_needed=false, },
-			{ .temperature=72000, .heating_budget=6000,   .cooling_needed=true,  },
-			{ .temperature=73000, .heating_budget=6000/2, .cooling_needed=true,  },
-			{ .temperature=74000, .heating_budget=6000/3, .cooling_needed=true,  },
-			{ .temperature=75000, .heating_budget=6000/6, .cooling_needed=true,  },
-			{ .temperature=77000, .heating_budget=0,      .cooling_needed=true,  },
+			{ .temperature=67000, .heating_budget=6000,   .cooling_needed=false, },
+			{ .temperature=69000, .heating_budget=6000,   .cooling_needed=true,  },
+			{ .temperature=70000, .heating_budget=6000/2, .cooling_needed=true,  },
+			{ .temperature=71000, .heating_budget=6000/3, .cooling_needed=true,  },
+			{ .temperature=72000, .heating_budget=6000/6, .cooling_needed=true,  },
+			{ .temperature=74000, .heating_budget=0,      .cooling_needed=true,  },
 			{ 0 }
 		},
 };
@@ -636,11 +675,41 @@ static struct pixcir_platform_data board_pixcir_pdata= {
 };
 
 // tsp
-static struct i2c_board_info __initdata board_i2c_4_boardinfo[] = {
+static struct i2c_board_info __initdata pixcir_tsp_i2c_boardinfo[] = {
 	{
 		I2C_BOARD_INFO(PIXCIR_NAME, PIXCIR_ADDR),
 		.flags = I2C_CLIENT_WAKE,
 		.platform_data = &board_pixcir_pdata,
+	},
+};
+
+static struct tr16c0_platform_data board_tr16c0_pdata = {
+	.x_max = 1280,
+	.y_max = 800,
+};
+
+static struct i2c_board_info __initdata tr16c0_tsp_i2c_boardinfo[] = {
+	{
+		I2C_BOARD_INFO(TR16C0_NAME, TR16C0_ADDR),
+		.flags = I2C_CLIENT_WAKE,
+		.platform_data = &board_tr16c0_pdata,
+	},
+};
+
+static struct cpt_i2c_tsp_platform_data board_cpt_i2c_tsp_pdata = {
+	.x_max = 1280,
+	.y_max = 800,
+	.x_offset = 0,
+	.x_scale = 0,
+	.y_offset = 0,
+	.y_scale = 0,
+};
+
+static struct i2c_board_info __initdata cpt_tsp_i2c_boardinfo [] = {
+	{
+		I2C_BOARD_INFO(CPT_I2C_TSP_NAME, CPT_I2C_TSP_ADDR),
+		.flags = I2C_CLIENT_WAKE,
+		.platform_data = &board_cpt_i2c_tsp_pdata,
 	},
 };
 
@@ -927,7 +996,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
-		.bkl_max = 221,
+		.bkl_max = 189,
 	},
 	.rev[5] = {
 		.power_led = UNUSED_GPIO,
@@ -941,7 +1010,7 @@ static struct archos_leds_config leds_config __initdata = {
 		.status_led = UNUSED_GPIO,
 		.backlight_power = 13,
 		.bkl_freq = 17000,
-		.bkl_max = 221,
+		.bkl_max = 189,
 	},
 };
 
@@ -1111,6 +1180,7 @@ static struct omap_board_config_kernel board_config[] __initdata = {
 	{ ARCHOS_TAG_USB_GADGET,	&gadget_config},
 	{ ARCHOS_TAG_USB,		&usb_config},
 	{ ARCHOS_TAG_SATA,		&sata_config},
+	{ ARCHOS_TAG_3G,		&usb_3g_config},
 	{ ARCHOS_TAG_I2C_TSP,		&i2c_tsp_config},
 	{ ARCHOS_TAG_TEMP_DUTY_CYCLE,	&temp_duty_cycle_config},
 };
@@ -1159,9 +1229,9 @@ static __init int archos_hdmi_init(void)
 	gpio_direction_output(hdmi_pwron, 0);
 	omap_mux_init_gpio(hdmi_pwron, OMAP_PIN_INPUT|OMAP_PIN_OUTPUT);
 	omap_mux_init_signal("hdmi_hpd", OMAP_PIN_INPUT );
-	omap_mux_init_signal("hdmi_cec", OMAP_PIN_INPUT_PULLUP );
-	omap_mux_init_signal("hdmi_ddc_scl", OMAP_PIN_INPUT_PULLUP );
-	omap_mux_init_signal("hdmi_ddc_sda", OMAP_PIN_INPUT_PULLUP );
+	omap_mux_init_signal("hdmi_cec", OMAP_PIN_INPUT );
+	omap_mux_init_signal("hdmi_ddc_scl", OMAP_PIN_INPUT );
+	omap_mux_init_signal("hdmi_ddc_sda", OMAP_PIN_INPUT );
 	return 0;
 }
 
@@ -1475,15 +1545,16 @@ static struct twl4030_madc_platform_data board_gpadc_data = {
 };
 
 static int board_batt_table[] = {
+	/* Sensicom CN0603R473B3750FB 47k B=3750  Rx=10k Ry=220k */
 	/* adc code for temperature in degree C */
-	929, 925, /* -2 ,-1 */
-	920, 917, 912, 908, 904, 899, 895, 890, 885, 880, /* 00 - 09 */
-	875, 869, 864, 858, 853, 847, 841, 835, 829, 823, /* 10 - 19 */
-	816, 810, 804, 797, 790, 783, 776, 769, 762, 755, /* 20 - 29 */
-	748, 740, 732, 725, 718, 710, 703, 695, 687, 679, /* 30 - 39 */
-	671, 663, 655, 647, 639, 631, 623, 615, 607, 599, /* 40 - 49 */
-	591, 583, 575, 567, 559, 551, 543, 535, 527, 519, /* 50 - 59 */
-	511, 504, 496 /* 60 - 62 */
+	925, 923,  /* -2 ,-1 */
+	920, 917, 914, 911, 908, 904, 901, 898, 894, 890,  /* 00 - 09 */
+	886, 882, 878, 874, 870, 865, 861, 856, 851, 846,  /* 10 - 19 */
+	841, 836, 830, 825, 819, 813, 807, 801, 795, 789,  /* 20 - 29 */
+	783, 776, 770, 763, 756, 749, 742, 735, 728, 721,  /* 30 - 39 */
+	713, 706, 698, 691, 683, 675, 668, 660, 652, 644,  /* 40 - 49 */
+	636, 628, 620, 612, 604, 596, 587, 579, 571, 563,  /* 50 - 59 */
+	555, 547, 539,  /* 60 - 62 */
 };
 
 static struct twl4030_bci_platform_data board_bci_data = {
@@ -1576,6 +1647,10 @@ static __initdata struct emif_device_details emif_devices[] = {
 	.cs0_device = &elpida_2G_S4,
 	.cs1_device = &elpida_2G_S4,
 	},
+	{
+	.cs0_device = &elpida_4G_S4,
+	.cs1_device = NULL,
+	},
 };
 
 static void __init omap_i2c_hwspinlock_init(int bus_id, unsigned int
@@ -1603,8 +1678,9 @@ static int __init omap4_i2c_init(void)
 		board_i2c_2_boardinfo, ARRAY_SIZE(board_i2c_2_boardinfo)); // FIXME speed
 	omap_register_i2c_bus(3, 100, &board_i2c_3_bus_pdata,
 		board_i2c_3_boardinfo, ARRAY_SIZE(board_i2c_3_boardinfo)); // FIXME speed
-	omap_register_i2c_bus(4, 400, &board_i2c_4_bus_pdata,
-		board_i2c_4_boardinfo, ARRAY_SIZE(board_i2c_4_boardinfo));
+
+	omap_register_i2c_bus(4, 400, &board_i2c_4_bus_pdata, NULL, 0);
+
 	return 0;
 }
 
@@ -1703,49 +1779,49 @@ static struct omap_volt_pmic_info omap_pmic_VCORE2 = {
 	.vp_vlimitto_vddmax = 0x2B,
 };
 
-static struct omap_volt_vc_data vc_config = {
-	.vdd0_on = 1375000,	/* 1.375v */
-	.vdd0_onlp = 1375000,	/* 1.375v */
-	.vdd0_ret = 750000,	/* 0.75v */
-	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1300000,	/* 1.3v */
-	.vdd1_onlp = 1300000,	/* 1.3v */
-	.vdd1_ret = 750000,	/* 0.75v */
-	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1200000,	/* 1.2v */
-	.vdd2_onlp = 1200000,	/* 1.2v */
-	.vdd2_ret = 750000,	/* .75v */
-	.vdd2_off = 0,		/* 0 v */
+static struct omap_volt_vc_data vc443x_config = {
+	.vdd0_on	= 1388000,	/* 1.388v */
+	.vdd0_onlp	= 1025000,	/* 1.025v */
+	.vdd0_ret	=  750000,	/* 0.75v  */
+	.vdd0_off	=	0,	/* 0 v    */
+	.vdd1_on	= 1291000,	/* 1.291v */
+	.vdd1_onlp	=  950000,	/* 0.95v  */
+	.vdd1_ret	=  750000,	/* 0.75v  */
+	.vdd1_off	=	0,	/* 0 v    */
+	.vdd2_on	= 1127000,	/* 1.127v */
+	.vdd2_onlp	=  962000,	/* 0.962v */
+	.vdd2_ret	=  750000,	/* 0.75v  */
+	.vdd2_off	=	0,	/* 0 v    */
 };
 
-static struct omap_volt_vc_data vc_config_old = {
-	.vdd0_on = 1350000,	/* 1.35v */
-	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 837500,	/* 0.837500v */
-	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1100000,	/* 1.1v */
-	.vdd1_onlp = 1100000,	/* 1.1v */
-	.vdd1_ret = 837500,	/* 0.837500v */
-	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1100000,	/* 1.1v */
-	.vdd2_onlp = 1100000,	/* 1.1v */
-	.vdd2_ret = 837500,	/* .837500v */
-	.vdd2_off = 0,		/* 0 v */
+static struct omap_volt_vc_data vc443x_config_old = {
+	.vdd0_on	= 1350000,	/* 1.35v   */
+	.vdd0_onlp	= 1350000,	/* 1.35v   */
+	.vdd0_ret	=  837500,	/* 0.8375v */
+	.vdd0_off	=	0,	/* 0 v     */
+	.vdd1_on	= 1100000,	/* 1.1v    */
+	.vdd1_onlp	= 1100000,	/* 1.1v    */
+	.vdd1_ret	=  837500,	/* 0.8375v */
+	.vdd1_off	=	0,	/* 0 v     */
+	.vdd2_on	= 1100000,	/* 1.1v    */
+	.vdd2_onlp	= 1100000,	/* 1.1v    */
+	.vdd2_ret	=  837500,	/* 0.8375v */
+	.vdd2_off	=	0,	/* 0 v     */
 };
 
 static struct omap_volt_vc_data vc446x_config = {
-	.vdd0_on = 1350000,	/* 1.35v */
-	.vdd0_onlp = 1350000,	/* 1.35v */
-	.vdd0_ret = 750000,	/* 0.75v */
-	.vdd0_off = 0,		/* 0 v */
-	.vdd1_on = 1350000,	/* 1.35v */
-	.vdd1_onlp = 1350000,	/* 1.35v */
-	.vdd1_ret = 750000,	/* 0.75v */
-	.vdd1_off = 0,		/* 0 v */
-	.vdd2_on = 1350000,	/* 1.35v */
-	.vdd2_onlp = 1350000,	/* 1.35v */
-	.vdd2_ret = 750000,	/* .75v */
-	.vdd2_off = 0,		/* 0 v */
+	.vdd0_on	= 1380000,	/* 1.38v  */
+	.vdd0_onlp	= 1025000,	/* 1.025v */
+	.vdd0_ret	=  750000,	/* 0.75v  */
+	.vdd0_off	=	0,	/* 0 v    */
+	.vdd1_on	= 1375000,	/* 1.375v */
+	.vdd1_onlp	=  950000,	/* 0.95v  */
+	.vdd1_ret	=  750000,	/* 0.75v  */
+	.vdd1_off	=	0,	/* 0 v    */
+	.vdd2_on	= 1127000,	/* 1.127v */
+	.vdd2_onlp	=  962000,	/* 0.962v */
+	.vdd2_ret	=  750000,	/* 0.75v  */
+	.vdd2_off	=	0,	/* 0 v    */
 };
 
 
@@ -1911,6 +1987,7 @@ static int omap_tshut_init(void)
 static void __init board_init(void)
 {
 	struct feature_tag_gpio_volume_keys * volume_keys;
+	struct feature_tag_touchscreen * tsp;
 	int package = OMAP_PACKAGE_CBS;
 	const struct emif_device_details *emif_config;
 	struct feature_tag_sdram *sdram;
@@ -1935,6 +2012,15 @@ static void __init board_init(void)
 		} else	if (!strcmp(sdram->product, "EDB8064B1PB")) {		// Elpida 1Go
 			printk(KERN_INFO "DDR type elpida 1Go\n");
 			emif_config = &emif_devices[3];
+		} else	if (!strcmp(sdram->product, "NT6TL64T64AR")) {		// Nanya 
+			printk(KERN_INFO "DDR type nanya\n");
+			emif_config = &emif_devices[1];
+		} else	if (!strcmp(sdram->product, "NT6TL128F64AR")) {		// Nanya 1Go
+			printk(KERN_INFO "DDR type nanya 1Go\n");
+			emif_config = &emif_devices[3];
+		} else	if (!strcmp(sdram->product, "EDB8164B3PF")) {		// Elpida 1Go
+			printk(KERN_INFO "DDR type elpida 1Go\n");
+			emif_config = &emif_devices[4];
 		} else {
 			printk(KERN_INFO "DDR type default\n");
 			emif_config = &emif_devices[0];
@@ -1942,6 +2028,17 @@ static void __init board_init(void)
 	} else {
 		printk(KERN_INFO "DDR type unknown\n");
 		emif_config = &emif_devices[0];
+	}
+
+
+	tsp = get_feature_tag(FTAG_HAS_TOUCHSCREEN, feature_tag_size(feature_tag_touchscreen));
+
+	if (!tsp || (tsp->vendor == 0)) {
+		i2c_register_board_info(4, pixcir_tsp_i2c_boardinfo, 1);
+	} else if (tsp->vendor == 1) {
+		i2c_register_board_info(4, tr16c0_tsp_i2c_boardinfo, 1);
+	} else {
+		i2c_register_board_info(4, cpt_tsp_i2c_boardinfo, 1);
 	}
 
 	omap_emif_setup_device_details(emif_config, emif_config);
@@ -1976,12 +2073,23 @@ static void __init board_init(void)
 		gpio_volume_buttons[0].gpio = volume_keys->gpio_vol_up;
 		gpio_volume_buttons[1].gpio = volume_keys->gpio_vol_down;
 
+		omap_mux_init_gpio(gpio_volume_buttons[0].gpio, 
+				OMAP_PIN_INPUT_PULLUP|OMAP_PIN_OFF_WAKEUPENABLE);
+		omap_mux_init_gpio(gpio_volume_buttons[1].gpio, 
+				OMAP_PIN_INPUT_PULLUP|OMAP_PIN_OFF_WAKEUPENABLE);
+		
 		platform_device_register(&volume_keys_gpio);
 	}
 
 	platform_add_devices(a101h_devices, ARRAY_SIZE(a101h_devices));
 
-	archos_touchscreen_pixcir_init(&board_pixcir_pdata);
+	if (!tsp || (tsp->vendor == 0)) {
+		archos_touchscreen_pixcir_init(&board_pixcir_pdata);
+	} else if (tsp->vendor == 1) {
+		archos_touchscreen_tr16c0_init(&board_tr16c0_pdata);
+	} else {
+		archos_touchscreen_cpt_i2c_tsp_init(&board_cpt_i2c_tsp_pdata);
+	}
 
 	wake_lock_init(&uart_lock, WAKE_LOCK_SUSPEND, "uart_wake_lock");
 
@@ -2050,11 +2158,10 @@ static void __init board_init(void)
 	if (cpu_is_omap446x())
 		omap_voltage_init_vc(&vc446x_config);
 	else {
-		if (omap_rev() <= OMAP4430_REV_ES2_1) {
-			omap_voltage_init_vc(&vc_config_old);
-		} else {
-			omap_voltage_init_vc(&vc_config);
-		}
+		if (omap_rev() < OMAP4430_REV_ES2_0)
+			omap_voltage_init_vc(&vc443x_config_old);
+		else
+			omap_voltage_init_vc(&vc443x_config);
 	}
 }
 

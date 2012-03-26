@@ -42,12 +42,12 @@ extern int cma_lock_buffer(int index);
 extern int cma_unlock_buffer(int index);
 
 enum cmabuf_state {
-	CMABUF_FREE = 0,
-	CMABUF_BUSY = 1,
-	CMABUF_PREPROCESSING = 2
+	CMABUF_READY = 0,
+	CMABUF_PREPROCESSING = 1,
 };
 
-extern u32 cma_set_output_buffer(u32 paddr, u32* new_addr, int rotation,  bool mirror, u16 *in_width, u16 *in_height);
+extern int cma_is_buffer_ready(u32 paddr, bool wait);
+extern u32 cma_set_output_buffer(u32 paddr, u32* new_addr, int rotation,  bool mirror, u16 *in_width, u16 *in_height, u16 *stride);
 extern int cma_set_buf_state(int ba, enum cmabuf_state state, int ovl_ix);
 extern int cma_set_ovl_win(int ovl_ix, int width, int height, int rotation);
 
